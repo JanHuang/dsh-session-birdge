@@ -32,6 +32,7 @@ test('the client bundle registers one named View after Trajectory', () => {
 
   let dictionary
   let registration
+  const registrations = []
   let injected
   const ctx = {
     effect: execute => {
@@ -52,6 +53,7 @@ test('the client bundle registers one named View after Trajectory', () => {
       },
       register: (options, component) => {
         registration = { options, component }
+        registrations.push(registration)
         return () => {}
       },
     },
@@ -67,4 +69,12 @@ test('the client bundle registers one named View after Trajectory', () => {
   assert.equal(dictionary.namespace, 'session-bridge')
   assert.ok(dictionary.dictionaries.zh['view.bridge'])
   assert.ok(dictionary.dictionaries.en['view.bridge'])
+
+  const sidebar = registrations.find(entry => entry.options.name === 'sidebar.panellist')
+  assert.ok(sidebar)
+  assert.equal(sidebar.options.id, 'session-chat')
+  assert.equal(sidebar.options.label(), 'view.chat')
+  const main = registrations.find(entry => entry.options.name === 'main')
+  assert.ok(main)
+  assert.equal(main.options.key, 'session-chat')
 })

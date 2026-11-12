@@ -90,7 +90,8 @@ export class BridgeStore {
         description TEXT,
         created_by_session TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        dissolved_at INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS group_members (
@@ -155,6 +156,7 @@ export class BridgeStore {
     this.#ensureColumn('messages', 'group_id', 'TEXT')
     this.#ensureColumn('messages', 'group_message_id', 'TEXT')
     this.#ensureColumn('group_messages', 'kind', "TEXT NOT NULL DEFAULT 'request'")
+    this.#ensureColumn('groups', 'dissolved_at', 'INTEGER')
     this.#db.exec(`
       CREATE INDEX IF NOT EXISTS idx_messages_group
         ON messages(group_id, created_at);
@@ -565,14 +567,43 @@ export class BridgeStore {
   /**
    * @returns {Array<object>}
    */
-  listGroups() {
+  listGroups(includeDissolved = false) {
     this.#assertOpen()
     return this.#statement(`
       SELECT g.*, (
         SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id
       ) AS member_count
-      FROM groups g ORDER BY g.updated_at DESC, g.created_at DESC
+      FROM groups g
+      ${includeDissolved ? '' : 'WHERE g.dissolved_at IS NULL'}
+      ORDER BY g.updated_at DESC, g.created_at DESC
     `).all().map(row => ({ ...rowToGroup(row), memberCount: Number(row.member_count) }))
+  }
+
+  /**
+   * Dissolve a group: remove every member but keep the group row and its
+   * canonical messages for history and audit.
+   * @param {string} groupId
+   * @param {number} now
+   * @returns {{ dissolved: boolean, removedMembers: number }}
+   */
+  dissolveGroup(groupId, now) {
+    this.#assertOpen()
+    const group = this.getGroup(groupId)
+    if (group === null) return { dissolved: false, removedMembers: 0 }
+    if (group.dissolvedAt !== undefined) return { dissolved: false, removedMembers: 0 }
+    const removedMembers = this.groupMembers(group.id).length
+    this.#db.exec('BEGIN IMMEDIATE')
+    try {
+      this.#statement('UPDATE groups SET dissolved_at = ?, updated_at = ? WHERE id = ?')
+        .run(now, now, group.id)
+      this.#statement('DELETE FROM group_members WHERE group_id = ?').run(group.id)
+      this.#db.exec('COMMIT')
+    } catch (error) {
+      this.#db.exec('ROLLBACK')
+      throw error
+    }
+    this.#changed()
+    return { dissolved: true, removedMembers }
   }
 
   /**
@@ -596,6 +627,8 @@ export class BridgeStore {
    */
   addGroupMember(input) {
     this.#assertOpen()
+    const group = this.getGroup(input.groupId)
+    if (group === null || group.dissolvedAt !== undefined) return false
     const result = this.#statement(`
       INSERT OR IGNORE INTO group_members (group_id, session_id, added_by_session, added_at)
       VALUES (?, ?, ?, ?)
@@ -642,6 +675,9 @@ export class BridgeStore {
    */
   insertGroupMessage(input) {
     this.#assertOpen()
+    const group = this.getGroup(input.groupId)
+    if (group === null) throw new Error('session-bridge: group does not exist')
+    if (group.dissolvedAt !== undefined) throw new Error('session-bridge: group is dissolved')
     if (input.idempotencyKey !== undefined) {
       const existing = this.#statement('SELECT * FROM group_messages WHERE idempotency_key = ?')
         .get(input.idempotencyKey)
@@ -760,7 +796,10 @@ export class BridgeStore {
     this.#assertOpen()
     return this.#statement(`
       SELECT * FROM (
-        SELECT * FROM group_messages ORDER BY created_at DESC LIMIT ?
+        SELECT gm.* FROM group_messages gm
+        JOIN groups g ON g.id = gm.group_id
+        WHERE g.dissolved_at IS NULL
+        ORDER BY gm.created_at DESC LIMIT ?
       ) ORDER BY created_at
     `).all(limit).map(rowToGroupMessage)
   }
@@ -1091,6 +1130,9 @@ function rowToGroup(row) {
     createdBySession: String(row.created_by_session),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
+    ...(row.dissolved_at === null || row.dissolved_at === undefined
+      ? {}
+      : { dissolvedAt: Number(row.dissolved_at) }),
   }
 }
 

@@ -245,6 +245,7 @@ export function buildTools({ ctx, store, policy, worker, config }) {
   const sendGroup = async (args, exec, groupArg, text) => {
     const callerSession = requireSession(exec)
     const group = requireGroup(groupArg)
+    if (group.dissolvedAt !== undefined) fail(`group "${group.name}" has been dissolved`)
     await assertTopLevelSession(ctx, callerSession, exec.signal, fail)
     if (!isGroupMember(group.id, callerSession)) {
       fail(`this session is not a member of group "${group.name}"`)
@@ -624,6 +625,7 @@ export function buildTools({ ctx, store, policy, worker, config }) {
         const now = Date.now()
         if (original.groupId !== undefined && original.groupMessageId !== undefined) {
           const group = requireGroup(original.groupId)
+          if (group.dissolvedAt !== undefined) fail(`group "${group.name}" has been dissolved`)
           if (!isGroupMember(group.id, callerSession)) {
             fail(`this session is no longer a member of group "${group.name}"`)
           }
@@ -996,6 +998,7 @@ export function buildTools({ ctx, store, policy, worker, config }) {
       execute: async (args, exec) => {
         const callerSession = requireSession(exec)
         const group = requireGroup(requireString(args, 'group'))
+        if (group.dissolvedAt !== undefined) fail(`group "${group.name}" has been dissolved`)
         if (!canAdminGroup(group, callerSession)) fail(`only the creator of group "${group.name}" or the lead role may add members`)
         const target = requireString(args, 'sessionId').trim()
         if (isGroupMember(group.id, target)) return `already a member: group="${group.name}" session=${target}`
@@ -1018,6 +1021,35 @@ export function buildTools({ ctx, store, policy, worker, config }) {
     },
 
     {
+      name: 'session_group_dissolve',
+      description: 'Dissolve a group. Only the group creator or the lead role may dissolve it. Every member is removed, the group disappears from lists and the panel, and its messages remain stored for history/audit.',
+      parameters: objectParameters({
+        group: { type: 'string', description: 'Group name or grp_ id.' },
+      }, ['group']),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const callerSession = requireSession(exec)
+        const group = requireGroup(requireString(args, 'group'))
+        if (group.dissolvedAt !== undefined) fail(`group "${group.name}" is already dissolved`)
+        if (!canAdminGroup(group, callerSession)) {
+          fail(`only the creator of group "${group.name}" or the lead role may dissolve it`)
+        }
+        const now = Date.now()
+        const result = store.dissolveGroup(group.id, now)
+        if (!result.dissolved) fail(`group "${group.name}" is already dissolved`)
+        store.audit({
+          at: now,
+          action: 'group_dissolve',
+          actorSession: callerSession,
+          actorRole: policy.resolveCaller(callerSession)?.role,
+          toSession: group.id,
+          detail: `name="${group.name}" removed_members=${result.removedMembers} messages_preserved=true`,
+        })
+        return `dissolved group="${group.name}" (${group.id}); removed ${result.removedMembers} member(s); messages preserved for history/audit.`
+      },
+    },
+
+    {
       name: 'session_group_remove',
       description: 'Remove one session id from a group. A member may leave; the creator or the lead role may remove others. The creator cannot be removed.',
       parameters: objectParameters({
@@ -1028,6 +1060,7 @@ export function buildTools({ ctx, store, policy, worker, config }) {
       execute: async (args, exec) => {
         const callerSession = requireSession(exec)
         const group = requireGroup(requireString(args, 'group'))
+        if (group.dissolvedAt !== undefined) fail(`group "${group.name}" has been dissolved`)
         const target = requireString(args, 'sessionId').trim()
         if (!isGroupMember(group.id, target)) fail(`session "${target}" is not a member of group "${group.name}"`)
         if (target === group.createdBySession) fail('the group creator cannot be removed')

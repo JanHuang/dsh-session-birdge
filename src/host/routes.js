@@ -29,6 +29,9 @@ export const SEND_PATH = '/api/session-bridge/send'
 /** Paged conversation history used by the client bundle. */
 export const HISTORY_PATH = '/api/session-bridge/history'
 
+/** Dissolve one group from the panel. */
+export const GROUP_DISSOLVE_PATH = '/api/session-bridge/group/dissolve'
+
 /** Default and maximum messages returned in one snapshot. */
 const DEFAULT_LIMIT = 300
 const MAX_LIMIT = 500
@@ -72,7 +75,14 @@ export function registerBridgeRoutes(ctx, deps) {
       requestBody: 'buffered',
       fetch: request => handleHistory(deps.store, request),
     })
+    const disposeDissolve = ctx.connection.fetch.register({
+      path: GROUP_DISSOLVE_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => handleGroupDissolve(ctx, deps, request),
+    })
     return async () => {
+      await disposeDissolve()
       await disposeHistory()
       await disposeSend()
       await disposeEvents()
@@ -173,6 +183,7 @@ async function handleSend(ctx, deps, request) {
   if (groupId !== '') {
     const group = deps.store.getGroup(groupId)
     if (group === null) return Response.json({ error: 'group not found' }, { status: 404 })
+    if (group.dissolvedAt !== undefined) return Response.json({ error: 'group is dissolved' }, { status: 409 })
     const items = await listSessions(ctx, request.signal)
     const from = items.find(item => String(item.sessionId) === fromSessionId)
     if (from === undefined) return Response.json({ error: 'session is not visible' }, { status: 404 })
@@ -273,6 +284,51 @@ async function handleSend(ctx, deps, request) {
   })
   deps.worker.kick()
   return Response.json({ messageId: message.id, status: 'pending' }, { status: 201 })
+}
+
+/**
+ * Dissolve one group from the panel.
+ * @param {any} ctx
+ * @param {{ store: import('./store.js').BridgeStore, policy: import('./policy.js').BridgePolicy }} deps
+ * @param {Request} request
+ * @returns {Promise<Response>}
+ */
+async function handleGroupDissolve(ctx, deps, request) {
+  if (request.method !== 'POST') return Response.json({ error: 'method not allowed' }, { status: 405 })
+  let body
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json({ error: 'body must be JSON' }, { status: 400 })
+  }
+  const fromSessionId = typeof body?.fromSessionId === 'string' ? body.fromSessionId : ''
+  const groupId = typeof body?.groupId === 'string' ? body.groupId : ''
+  if (fromSessionId === '' || groupId === '') {
+    return Response.json({ error: 'fromSessionId and groupId are required' }, { status: 400 })
+  }
+  const group = deps.store.getGroup(groupId)
+  if (group === null) return Response.json({ error: 'group not found' }, { status: 404 })
+  if (group.dissolvedAt !== undefined) return Response.json({ error: 'group is already dissolved' }, { status: 409 })
+  const items = await listSessions(ctx, request.signal)
+  const from = items.find(item => String(item.sessionId) === fromSessionId)
+  if (from === undefined) return Response.json({ error: 'session is not visible' }, { status: 404 })
+  if (from.origin === 'subagent') return Response.json({ error: 'subagent sessions cannot use the chat' }, { status: 400 })
+  const callerRole = deps.policy.resolveCaller(fromSessionId)?.role
+  if (group.createdBySession !== fromSessionId && callerRole !== 'lead') {
+    return Response.json({ error: 'only the group creator or the lead role may dissolve it' }, { status: 403 })
+  }
+  const now = Date.now()
+  const result = deps.store.dissolveGroup(group.id, now)
+  if (!result.dissolved) return Response.json({ error: 'group is already dissolved' }, { status: 409 })
+  deps.store.audit({
+    at: now,
+    action: 'group_dissolve',
+    actorSession: fromSessionId,
+    actorRole: callerRole,
+    toSession: group.id,
+    detail: `name="${group.name}" removed_members=${result.removedMembers} source=view messages_preserved=true`,
+  })
+  return Response.json({ dissolved: true, removedMembers: result.removedMembers }, { status: 200 })
 }
 
 /**

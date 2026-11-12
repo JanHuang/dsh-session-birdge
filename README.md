@@ -99,11 +99,24 @@ group chat. The creator is always a member and cannot be removed; the creator or
 the lead role can add and remove others; a member may leave. Membership is by
 fixed session id, not by role binding.
 
+The group chat header lists every member as a chip with their title and role.
+Clicking another member opens the direct chat with that member, creating a draft
+conversation when no direct messages exist yet. The creator or the lead role can
+dissolve the group from the header after a confirmation:
+
+```text
+session_group_dissolve { "group": "frontend" }
+```
+
+Dissolving removes every member and hides the group from lists and the panel;
+the group's messages remain in the database for history and audit.
+
 ## Bridge view
 
 The bundle ships a Client half. A **Session Chat** tab (`会话聊天`) appears in the
-conversation View row after **Trajectory** (`轨迹`) and follows the host's
-light/dark theme. The layout is a fixed sidebar plus a chat panel:
+conversation View row after **Trajectory** (`轨迹`), and a global **Session Chat**
+icon in the sidebar rail opens a standalone panel with an identity-session
+picker. Both follow the host's light/dark theme. The layout is a fixed sidebar plus a chat panel:
 
 - The left list scrolls independently and uses background fill only — no
   dividers, borders, or separators. Default, hover, and selected states use
@@ -136,7 +149,8 @@ light/dark theme. The layout is a fixed sidebar plus a chat panel:
 Design previews: [light](design/session-bridge-light.png) ·
 [dark](design/session-bridge-dark.png) · [HTML source](design/session-bridge-chat.html).
 Both PNGs are 2880×1800 (1440×900 at 2x) renders of the standalone design HTML,
-not screenshots of a running DSH page. The Chinese guide with the same
+not screenshots of a running DSH page; the group member chips, dissolve control,
+and sidebar entry are not shown in these single-chat previews. The Chinese guide with the same
 screenshots is [README.zh.md](README.zh.md).
 
 ## Tools
@@ -148,6 +162,7 @@ screenshots is [README.zh.md](README.zh.md).
 | `session_group_list` | List groups this session belongs to (lead sees all), with members and roles. |
 | `session_group_add` | Add a fixed session id; creator or lead only. |
 | `session_group_remove` | Leave a group, or remove another member as creator/lead; the creator cannot be removed. |
+| `session_group_dissolve` | Dissolve a group as creator/lead; members are removed and messages are retained. |
 | `session_ask` | Send a request and wait for the reply in this turn (bounded timeout). |
 | `session_inbox` | Read messages delivered to this session; marks them read. |
 | `session_reply` | Answer one received message; marks the original acknowledged. |

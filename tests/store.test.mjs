@@ -292,3 +292,36 @@ test('groups fan out one logical message and keep direct history clean', t => {
   assert.equal(store.removeGroupMember('grp_1', 'session-designer', 50), true)
   assert.equal(store.groupMembers('grp_1').length, 2)
 })
+
+test('dissolving a group removes members but keeps its messages', t => {
+  const store = freshStore(t)
+  store.createGroup({
+    id: 'grp_dissolve',
+    name: 'temporary',
+    createdBySession: 'session-impl',
+    memberIds: ['session-impl', 'session-reviewer'],
+    now: 10,
+  })
+  store.insertGroupMessage({
+    id: 'gmsg_keep',
+    groupId: 'grp_dissolve',
+    fromRole: 'impl',
+    fromSessionId: 'session-impl',
+    content: 'keep me',
+    kind: 'request',
+    threadId: 'group:grp_dissolve',
+    createdAt: 20,
+    priority: 'normal',
+    expiresAt: 1_000,
+    recipients: [{ sessionId: 'session-reviewer', role: 'reviewer' }],
+  })
+  const result = store.dissolveGroup('grp_dissolve', 30)
+  assert.equal(result.dissolved, true)
+  assert.equal(result.removedMembers, 2)
+  assert.equal(store.groupMembers('grp_dissolve').length, 0)
+  assert.equal(store.getGroup('grp_dissolve').dissolvedAt, 30)
+  assert.equal(store.listGroups().length, 0)
+  assert.equal(store.listGroups(true).length, 1)
+  assert.equal(store.groupMessagesBefore('grp_dissolve', undefined, '', 20).messages[0].content, 'keep me')
+  assert.equal(store.dissolveGroup('grp_dissolve', 40).dissolved, false)
+})

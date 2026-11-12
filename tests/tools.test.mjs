@@ -534,3 +534,32 @@ test('group membership and administration are enforced', async t => {
     /removed session=session-reviewer/,
   )
 })
+
+test('only the creator or lead can dissolve a group, and messages remain', async t => {
+  const bridge = createBridge(t)
+  bridge.controller.sessionsList = [
+    { sessionId: 'session-impl', origin: 'root' },
+    { sessionId: 'session-reviewer', origin: 'root' },
+  ]
+  idle(bridge, 'session-impl', 'session-reviewer')
+  await bind(bridge, 'session-impl', 'impl')
+  await bind(bridge, 'session-reviewer', 'reviewer')
+  await bridge.call('session_group_create', 'session-impl', {
+    name: 'temporary',
+    members: ['session-reviewer'],
+  })
+  await bridge.call('session_send', 'session-impl', { toGroup: 'temporary', text: 'hello' })
+  await assert.rejects(
+    bridge.call('session_group_dissolve', 'session-reviewer', { group: 'temporary' }),
+    /only the creator/,
+  )
+  const dissolved = await bridge.call('session_group_dissolve', 'session-impl', { group: 'temporary' })
+  assert.match(dissolved, /messages preserved/)
+  assert.equal(bridge.store.groupMembers('temporary').length, 0)
+  assert.equal(bridge.store.listGroups().length, 0)
+  assert.match(await bridge.call('session_group_list', 'session-impl', {}), /groups: 0/)
+  await assert.rejects(
+    bridge.call('session_send', 'session-impl', { toGroup: 'temporary', text: 'after' }),
+    /has been dissolved/,
+  )
+})

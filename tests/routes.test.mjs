@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import test from 'node:test'
-import { buildSnapshot, EVENTS_PATH, HISTORY_PATH, registerBridgeRoutes, SEND_PATH, SNAPSHOT_PATH } from '../src/host/routes.js'
+import { buildSnapshot, EVENTS_PATH, GROUP_DISSOLVE_PATH, HISTORY_PATH, registerBridgeRoutes, SEND_PATH, SNAPSHOT_PATH } from '../src/host/routes.js'
 import { BridgeStore } from '../src/host/store.js'
 import { seedMessage, tempDirectory } from './helpers.mjs'
 
@@ -329,4 +329,43 @@ test('the send route broadcasts to a group', async t => {
   assert.equal(body.recipients, 1)
   assert.equal(store.getGroupMessage(body.groupMessageId).content, 'hello group')
   assert.equal(store.groupDeliveryStatus(body.groupMessageId).length, 1)
+})
+
+test('the dissolve route removes members and keeps group history', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  store.createGroup({
+    id: 'grp_dissolve_route',
+    name: 'temporary',
+    createdBySession: 'session-lead',
+    memberIds: ['session-lead', 'session-reviewer'],
+    now: 1_000_000,
+  })
+  store.insertGroupMessage({
+    id: 'gmsg_dissolve_route',
+    groupId: 'grp_dissolve_route',
+    fromRole: 'lead',
+    fromSessionId: 'session-lead',
+    content: 'keep this',
+    kind: 'request',
+    threadId: 'group:grp_dissolve_route',
+    createdAt: 1_000_001,
+    priority: 'normal',
+    expiresAt: 86_400_000,
+    recipients: [{ sessionId: 'session-reviewer', role: 'direct' }],
+  })
+  const { routes } = fakeRoutes(store)
+  const response = await routes.get(GROUP_DISSOLVE_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/group/dissolve', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fromSessionId: 'session-lead', groupId: 'grp_dissolve_route' }),
+  }))
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).dissolved, true)
+  assert.equal(store.groupMembers('grp_dissolve_route').length, 0)
+  assert.ok(store.getGroup('grp_dissolve_route').dissolvedAt)
+  const snapshot = await routes.get(SNAPSHOT_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/snapshot'))
+  assert.equal((await snapshot.json()).conversations.some(conversation => conversation.kind === 'group'), false)
+  const history = await routes.get(HISTORY_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/history?group=grp_dissolve_route'))
+  assert.equal((await history.json()).messages[0].content, 'keep this')
 })

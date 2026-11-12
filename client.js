@@ -19,9 +19,12 @@ window.__ModuleLoader__.load({
     const EVENTS_URL = '/api/session-bridge/events'
     const SEND_URL = '/api/session-bridge/send'
     const HISTORY_URL = '/api/session-bridge/history'
+    const GROUP_DISSOLVE_URL = '/api/session-bridge/group/dissolve'
 
     const zh = {
       'view.bridge': '会话聊天',
+      'view.chat': '会话聊天',
+      'picker.label': '选择要操作的身份会话',
       'title': '会话聊天',
       'live': '实时更新',
       'reconnecting': '重连中…',
@@ -43,6 +46,12 @@ window.__ModuleLoader__.load({
       'group.emptyHint': '发送第一条消息给所有成员。',
       'send.groupPlaceholder': '发送消息到群组…',
       'send.groupBlocked': '当前会话不在这个群组中',
+      'group.you': '你',
+      'group.dissolve': '解散群组',
+      'group.dissolveConfirm': '确认解散',
+      'group.dissolveCancel': '取消',
+      'group.dissolving': '解散中…',
+      'group.dissolveFailed': '解散群组失败',
       'role.direct': 'Bridge',
       'role.lead': 'Lead',
       'kind.request': '请求',
@@ -67,6 +76,8 @@ window.__ModuleLoader__.load({
     }
     const en = {
       'view.bridge': 'Session Chat',
+      'view.chat': 'Session Chat',
+      'picker.label': 'Choose the session to act as',
       'title': 'Session Chat',
       'live': 'Live',
       'reconnecting': 'Reconnecting…',
@@ -88,6 +99,12 @@ window.__ModuleLoader__.load({
       'group.emptyHint': 'Send the first message to every member.',
       'send.groupPlaceholder': 'Message the group…',
       'send.groupBlocked': 'Current session is not a member of this group',
+      'group.you': 'you',
+      'group.dissolve': 'Dissolve group',
+      'group.dissolveConfirm': 'Confirm dissolve',
+      'group.dissolveCancel': 'Cancel',
+      'group.dissolving': 'Dissolving…',
+      'group.dissolveFailed': 'Could not dissolve group',
       'role.direct': 'Bridge',
       'role.lead': 'Lead',
       'kind.request': 'request',
@@ -164,6 +181,24 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-thread[data-active="true"] { background:var(--dsb-item-active); }
 .dsb-thread-row { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .dsb-thread-title { font-size:14px; font-weight:500; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dsb-chat-head-row { display:flex; align-items:flex-start; gap:8px; }
+.dsb-chat-head-main { flex:1; min-width:0; }
+.dsb-chat-head-actions { display:flex; gap:6px; flex:0 0 auto; }
+.dsb-group-dissolve { appearance:none; border:0; background:none; color:var(--dsb-muted); font:inherit; font-size:12px; cursor:pointer; padding:2px 4px; }
+.dsb-group-dissolve:hover { color:var(--dsb-text); }
+.dsb-group-dissolve.danger { color:#F53F3F; font-weight:600; }
+.dsb-group-dissolve:disabled { opacity:.5; cursor:default; }
+.dsb-group-members { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.dsb-member-chip { appearance:none; border:1px solid var(--dsb-line); background:var(--dsb-item); color:var(--dsb-text); border-radius:999px; padding:3px 8px 3px 4px; display:inline-flex; align-items:center; gap:5px; font:inherit; font-size:12px; cursor:pointer; max-width:100%; }
+.dsb-member-chip:hover { background:var(--dsb-item-hover); }
+.dsb-member-chip[data-current="true"] { border-color:var(--dsb-focus); background:var(--dsb-item-active); cursor:default; }
+.dsb-member-avatar { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--dsb-lead); color:var(--dsb-text); font-size:10px; font-weight:700; flex:0 0 auto; }
+.dsb-member-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px; }
+.dsb-member-role { color:var(--dsb-muted); font-size:11px; }
+.dsb-session-picker { margin-left:10px; height:26px; border:1px solid var(--dsb-line); border-radius:6px; background:var(--dsb-input); color:var(--dsb-text); font-size:12px; max-width:220px; }
+body[data-ds-dark-theme] .dsb-member-chip { border-color:var(--dsb-line); }
+body[data-ds-dark-theme] .dsb-member-avatar { background:var(--dsb-panel); }
+body[data-ds-dark-theme] .dsb-group-dissolve.danger { color:#FF7D7D; }
 .dsb-group-badge { display:inline-block; margin-right:6px; padding:1px 5px; border-radius:4px; background:var(--dsb-item-active); color:var(--dsb-focus); font-size:10px; font-weight:600; vertical-align:1px; }
 .dsb-thread-time { margin-left:auto; flex:0 0 auto; color:var(--dsb-muted); font-size:12px; font-variant-numeric:tabular-nums; }
 .dsb-thread-preview { position:relative; display:block; margin-top:4px; color:var(--dsb-muted); font-size:12px; line-height:18px; white-space:nowrap; overflow:hidden; }
@@ -437,6 +472,31 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
       )
     }
 
+    /** Sidebar rail icon for the global Session Chat panel. */
+    function SessionChatIcon({ size = 20, active = false }) {
+      return h('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 20 20',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.6,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        style: { opacity: active ? 1 : 0.8 },
+      },
+        h('path', { d: 'M4 4.5h12a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H8l-3.5 2.5v-2.5H4a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z' }),
+        h('path', { d: 'M6.5 7.5h7' }),
+        h('path', { d: 'M6.5 10.2h4.5' }),
+      )
+    }
+
+    /** Global panel version with a session selector; conversation tabs supply a session directly. */
+    function SessionChatPage(props) {
+      return h(BridgeView, { ...props, allowSessionPicker: true })
+    }
+
     /** The tab component. */
     function BridgeView(props) {
       const translate = useCallback((key, fallback) => {
@@ -449,13 +509,18 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         return typeof value === 'string' && value !== '' && value !== key ? value : fallback
       }, [props.t])
 
-      const currentSessionId = typeof props.sessionId === 'string' ? props.sessionId : null
+      const providedSessionId = typeof props.sessionId === 'string' ? props.sessionId : null
+      const [pickedSessionId, setPickedSessionId] = useState(null)
+      const currentSessionId = providedSessionId ?? pickedSessionId
       const [snapshot, setSnapshot] = useState(null)
       const [error, setError] = useState(null)
       const [loading, setLoading] = useState(true)
       const [refreshing, setRefreshing] = useState(false)
       const [connection, setConnection] = useState('connecting')
       const [selectedId, setSelectedId] = useState(null)
+      const [draftPeer, setDraftPeer] = useState(null)
+      const [dissolveConfirm, setDissolveConfirm] = useState(false)
+      const [dissolving, setDissolving] = useState(false)
       const [history, setHistory] = useState({})
       const [historyError, setHistoryError] = useState(null)
       const [draft, setDraft] = useState('')
@@ -647,6 +712,12 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         fitLayoutRef.current()
       }, [loading, snapshot, selectedId])
 
+      useEffect(() => {
+        if (providedSessionId !== null || pickedSessionId !== null) return
+        const first = Object.keys(snapshot?.sessions ?? {})[0]
+        if (first !== undefined) setPickedSessionId(first)
+      }, [snapshot, providedSessionId, pickedSessionId])
+
       const conversations = (Array.isArray(snapshot?.conversations) ? snapshot.conversations : [])
         .filter(conversation => conversation.kind !== 'group'
           || currentSessionId === null
@@ -654,6 +725,36 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             && conversation.members.some(member => member.sessionId === currentSessionId)))
       const sessions = snapshot?.sessions ?? {}
       const totalMessages = typeof snapshot?.totalMessages === 'number' ? snapshot.totalMessages : 0
+      const directPairKey = (left, right) => left <= right ? `${left}|${right}` : `${right}|${left}`
+      const roleOfSession = sessionId => {
+        for (const conversation of conversations) {
+          const member = Array.isArray(conversation.members)
+            ? conversation.members.find(entry => entry.sessionId === sessionId)
+            : undefined
+          if (member !== undefined) return member.role
+          const participant = conversation.participants.find(entry => entry.sessionId === sessionId)
+          if (participant !== undefined) return participant.role
+        }
+        return 'direct'
+      }
+      const draftDirect = currentSessionId !== null && draftPeer !== null
+        ? conversations.find(conversation => conversation.kind === 'direct'
+          && conversation.participants.some(participant => participant.sessionId === currentSessionId)
+          && conversation.participants.some(participant => participant.sessionId === draftPeer)) ?? null
+        : null
+      const draftConversation = draftDirect !== null || draftPeer === null || currentSessionId === null
+        ? null
+        : {
+          id: directPairKey(currentSessionId, draftPeer),
+          kind: 'direct',
+          participants: [
+            { role: roleOfSession(currentSessionId), sessionId: currentSessionId },
+            { role: roleOfSession(draftPeer), sessionId: draftPeer },
+          ],
+          threadIds: [],
+          messages: [],
+          updatedAt: Date.now(),
+        }
       const ordered = [...conversations].sort((left, right) => {
         const leftCurrent = currentSessionId !== null
           && left.participants.some(participant => participant.sessionId === currentSessionId)
@@ -661,7 +762,9 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
           && right.participants.some(participant => participant.sessionId === currentSessionId)
         return Number(rightCurrent) - Number(leftCurrent) || right.updatedAt - left.updatedAt
       })
-      const active = ordered.find(conversation => conversation.id === selectedId) ?? ordered[0]
+      const active = selectedId === draftConversation?.id
+        ? draftConversation
+        : ordered.find(conversation => conversation.id === selectedId) ?? ordered[0]
 
       const nameOf = id => {
         if (typeof id !== 'string' || id === '') return null
@@ -729,7 +832,26 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
 
       const selectConversation = id => {
         if (id === selectedId) return
+        if (draftConversation === null || id !== draftConversation.id) setDraftPeer(null)
+        setDissolveConfirm(false)
         setSelectedId(id)
+        setSendError(null)
+        setHistoryError(null)
+      }
+
+      const openDirectWith = sessionId => {
+        if (currentSessionId === null || sessionId === currentSessionId) return
+        const existing = conversations.find(conversation => conversation.kind === 'direct'
+          && conversation.participants.some(participant => participant.sessionId === currentSessionId)
+          && conversation.participants.some(participant => participant.sessionId === sessionId))
+        if (existing !== undefined) {
+          setDraftPeer(null)
+          selectConversation(existing.id)
+          return
+        }
+        setDraftPeer(sessionId)
+        setDissolveConfirm(false)
+        setSelectedId(directPairKey(currentSessionId, sessionId))
         setSendError(null)
         setHistoryError(null)
       }
@@ -845,6 +967,27 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         }
       }
 
+      const dissolveGroup = async () => {
+        if (!isGroup || dissolving || currentSessionId === null) return
+        setDissolving(true)
+        setSendError(null)
+        try {
+          const response = await fetch(GROUP_DISSOLVE_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({ fromSessionId: currentSessionId, groupId: active.groupId }),
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`)
+          setDissolveConfirm(false)
+          setSelectedId(null)
+        } catch (failure) {
+          setSendError(`${translate('group.dissolveFailed', 'Could not dissolve group')}: ${failure instanceof Error ? failure.message : String(failure)}`)
+        } finally {
+          setDissolving(false)
+        }
+      }
+
       const submit = async event => {
         event.preventDefault()
         if (!canSend || sending) return
@@ -870,8 +1013,28 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         }
       }
 
+      const sessionPicker = providedSessionId === null && snapshot !== null
+        ? h('select', {
+          className: 'dsb-session-picker',
+          value: currentSessionId ?? '',
+          'aria-label': translate('picker.label', 'Choose the session to act as'),
+          onChange: event => {
+            setPickedSessionId(event.target.value)
+            setDraftPeer(null)
+            setSelectedId(null)
+          },
+        },
+          Object.entries(sessions).map(([sessionId, info]) => h('option', { key: sessionId, value: sessionId },
+            typeof info.title === 'string' && info.title !== ''
+              ? info.title
+              : `${sessionId.slice(0, 8)}…${sessionId.slice(-6)}`)))
+        : null
+
       const header = h('div', { className: 'dsb-topbar' },
-        h('div', { className: 'dsb-brand' }, translate('title', 'Session Chat')),
+        h('div', { className: 'dsb-brand' },
+          translate('title', 'Session Chat'),
+          sessionPicker,
+        ),
         h('div', { className: 'dsb-top-actions' },
           h('span', { className: 'dsb-live' },
             h('span', { className: 'dsb-live-dot' }),
@@ -918,7 +1081,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
               translate('retry', 'Retry')),
           ))
       }
-      if (ordered.length === 0) {
+      if (ordered.length === 0 && draftConversation === null) {
         return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header, errorStrip,
           center(translate('empty.title', 'No bridge messages yet'),
             translate('empty.hint', 'Mention another session with @ and send a message; the conversation appears here.')))
@@ -1059,6 +1222,31 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
           ))
         }
 
+        const groupMembers = isGroup && Array.isArray(active.members) ? active.members : []
+        const currentMember = groupMembers.find(member => member.sessionId === currentSessionId) ?? null
+        const canDissolve = isGroup && currentSessionId !== null
+          && (active.createdBySession === currentSessionId || currentMember?.role === 'lead')
+        const memberStrip = isGroup
+          ? h('div', { className: 'dsb-group-members' },
+            groupMembers.map(member => {
+              const current = member.sessionId === currentSessionId
+              const label = nameOf(member.sessionId) ?? member.sessionId
+              return h('button', {
+                key: member.sessionId,
+                type: 'button',
+                className: 'dsb-member-chip',
+                'data-current': String(current),
+                title: `${member.sessionId} · ${displayRole(member.role)}`,
+                onClick: () => { if (!current) openDirectWith(member.sessionId) },
+              },
+                h('span', { className: 'dsb-member-avatar' }, (label || '?').slice(0, 1).toUpperCase()),
+                h('span', { className: 'dsb-member-name' }, label),
+                h('span', { className: 'dsb-member-role' }, current ? translate('group.you', 'you') : displayRole(member.role)),
+              )
+            }),
+          )
+          : null
+
         const placeholder = !canSend
           ? isGroup
             ? translate('send.groupBlocked', 'Current session is not a member of this group')
@@ -1076,8 +1264,39 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
               ? active.members.map(member => `${nameOf(member.sessionId) ?? member.sessionId} (${displayRole(member.role)})`).join(', ')
               : undefined,
           },
-            h('div', { className: 'dsb-chat-title' }, chatLabel),
-            h('div', { className: 'dsb-chat-sub' }, chatSubtitle),
+            h('div', { className: 'dsb-chat-head-row' },
+              h('div', { className: 'dsb-chat-head-main' },
+                h('div', { className: 'dsb-chat-title' }, chatLabel),
+                h('div', { className: 'dsb-chat-sub' }, chatSubtitle),
+              ),
+              canDissolve
+                ? h('div', { className: 'dsb-chat-head-actions' },
+                  dissolveConfirm
+                    ? [
+                      h('button', {
+                        key: 'confirm',
+                        type: 'button',
+                        className: 'dsb-group-dissolve danger',
+                        disabled: dissolving,
+                        onClick: () => { void dissolveGroup() },
+                      }, dissolving ? translate('group.dissolving', 'Dissolving…') : translate('group.dissolveConfirm', 'Confirm dissolve')),
+                      h('button', {
+                        key: 'cancel',
+                        type: 'button',
+                        className: 'dsb-group-dissolve',
+                        disabled: dissolving,
+                        onClick: () => setDissolveConfirm(false),
+                      }, translate('group.dissolveCancel', 'Cancel')),
+                    ]
+                    : h('button', {
+                      type: 'button',
+                      className: 'dsb-group-dissolve',
+                      onClick: () => setDissolveConfirm(true),
+                    }, translate('group.dissolve', 'Dissolve group')),
+                )
+                : null,
+            ),
+            memberStrip,
           ),
           h('div', { className: 'dsb-messages', ref: messagesRef, onScroll: handleMessagesScroll },
             historyBar,
@@ -1144,6 +1363,17 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             return { ok: false, error: failure instanceof Error ? failure.message : String(failure) }
           }
         }
+        ctx.slots.register({
+          name: 'sidebar.panellist',
+          id: 'session-chat',
+          order: 4,
+          label: () => t('view.chat'),
+        }, SessionChatIcon)
+        ctx.slots.register({
+          name: 'main',
+          key: 'session-chat',
+          inject: () => ({ openPath, t }),
+        }, SessionChatPage)
         ctx.slots.inject('conversation.view', () => ctx.slots.register({
           name: 'conversation.view',
           id: 'bridge',
