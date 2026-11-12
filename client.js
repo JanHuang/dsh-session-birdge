@@ -153,8 +153,8 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-preview-text { display:block; overflow:hidden; text-overflow:ellipsis; }
 .dsb-measure { position:absolute; left:0; top:0; visibility:hidden; white-space:nowrap; pointer-events:none; }
 .dsb-marquee { display:block; overflow:hidden; }
-.dsb-marquee-track { display:inline-flex; gap:32px; white-space:nowrap; animation:dsb-marquee var(--dsb-marquee-duration, 12s) linear infinite; }
-.dsb-thread:hover .dsb-marquee-track { animation-play-state:paused; }
+.dsb-marquee-track { display:inline-flex; gap:32px; white-space:nowrap; animation:dsb-marquee var(--dsb-marquee-duration, 12s) linear infinite; animation-play-state:paused; }
+.dsb-thread:hover .dsb-marquee-track, .dsb-thread:focus-visible .dsb-marquee-track { animation-play-state:running; }
 @keyframes dsb-marquee { from { transform:translateX(0); } to { transform:translateX(calc(-1 * var(--dsb-marquee-distance, 0px))); } }
 @media (prefers-reduced-motion: reduce) { .dsb-marquee-track { animation:none; } }
 .dsb-chat { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--dsb-chat); border-radius:12px; overflow:hidden; }
