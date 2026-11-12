@@ -1,11 +1,11 @@
 /**
  * Bridge conversation view.
  *
- * Registers one `conversation.view` tab after Trajectory. One card is one pair
- * of sessions: every thread and historical message between that pair lives in
- * the same chat, newest activity first, with today's messages visible and older
- * history collapsed by default. Data comes from the Host's read-only
- * `/api/session-bridge/snapshot` route.
+ * One card is one pair of sessions: every thread and historical message between
+ * that pair lives in the same chat. The view follows the host theme
+ * (`body[data-ds-dark-theme]`), receives new messages over an authenticated
+ * server-sent event stream, defaults to today's history, and can queue a new
+ * request for the selected peer through the panel composer.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-session-bridge',
@@ -17,148 +17,164 @@ window.__ModuleLoader__.load({
     const NS = 'session-bridge'
     const SNAPSHOT_URL = '/api/session-bridge/snapshot?limit=500'
     const EVENTS_URL = '/api/session-bridge/events'
-    const MESSAGE_LIMIT = 320
+    const SEND_URL = '/api/session-bridge/send'
 
     const zh = {
       'view.bridge': '会话桥',
       'title': '会话桥',
-      'subtitle': '所有通过 bridge 沟通的会话',
-      'refresh': '刷新',
-      'refreshing': '刷新中…',
       'live': '实时更新',
       'reconnecting': '重连中…',
+      'refresh': '刷新',
+      'refreshing': '刷新中…',
       'loading': '正在读取桥接消息…',
       'error': '无法读取桥接消息',
       'retry': '重试',
       'empty.title': '还没有桥接消息',
       'empty.hint': '在一个会话里 @ 另一个会话发送消息后，这里会出现对话。',
-      'count.conversations': '个会话',
+      'list.title': '会话',
       'count.threads': '个线程',
       'count.messages': '条消息',
-      'role.direct': '直连',
+      'role.direct': 'Bridge',
+      'role.lead': 'Lead',
       'kind.request': '请求',
       'kind.reply': '回复',
       'kind.notice': '通知',
       'kind.control': '控制',
-      'priority.high': '高优先级',
-      'status.pending': '等待投递',
-      'status.delivering': '投递中',
-      'status.failed': '投递失败',
-      'status.expired': '已过期',
-      'unknown.session': '未知会话',
-      'current.tag': '当前',
       'day.today': '今天',
       'day.yesterday': '昨天',
       'history.older': '更早的消息',
       'history.collapse': '收起更早的消息',
       'history.emptyToday': '今天还没有新消息',
       'history.hint': '展开更早的消息查看历史沟通。',
-      'message.expand': '展开',
-      'message.collapse': '收起',
+      'copy': '复制代码',
+      'send.placeholder': '输入消息，Enter 发送…',
+      'send.blocked': '当前会话不在此对话中',
+      'send.unbound': '对方会话尚未绑定，暂时无法发送',
+      'send.button': '发送',
+      'send.failed': '发送失败',
     }
-
     const en = {
       'view.bridge': 'Bridge',
       'title': 'Session bridge',
-      'subtitle': 'Every session conversation carried by the bridge',
-      'refresh': 'Refresh',
-      'refreshing': 'Refreshing…',
       'live': 'Live',
       'reconnecting': 'Reconnecting…',
+      'refresh': 'Refresh',
+      'refreshing': 'Refreshing…',
       'loading': 'Reading bridge messages…',
       'error': 'Could not read bridge messages',
       'retry': 'Retry',
       'empty.title': 'No bridge messages yet',
       'empty.hint': 'Mention another session with @ and send a message; the conversation appears here.',
-      'count.conversations': 'conversations',
+      'list.title': 'Conversations',
       'count.threads': 'threads',
       'count.messages': 'messages',
-      'role.direct': 'direct',
+      'role.direct': 'Bridge',
+      'role.lead': 'Lead',
       'kind.request': 'request',
       'kind.reply': 'reply',
       'kind.notice': 'notice',
       'kind.control': 'control',
-      'priority.high': 'high priority',
-      'status.pending': 'queued',
-      'status.delivering': 'delivering',
-      'status.failed': 'failed',
-      'status.expired': 'expired',
-      'unknown.session': 'Unknown session',
-      'current.tag': 'current',
       'day.today': 'Today',
       'day.yesterday': 'Yesterday',
       'history.older': 'Earlier messages',
       'history.collapse': 'Hide earlier messages',
       'history.emptyToday': 'No messages today yet',
       'history.hint': 'Expand earlier messages to read the history.',
-      'message.expand': 'Expand',
-      'message.collapse': 'Collapse',
+      'copy': 'Copy code',
+      'send.placeholder': 'Type a message, Enter to send…',
+      'send.blocked': 'Current session is not in this conversation',
+      'send.unbound': 'The peer session is not bound yet',
+      'send.button': 'Send',
+      'send.failed': 'Could not send',
     }
 
     const CSS = `
-.dsb-root { display:flex; flex-direction:column; height:100%; min-height:320px; background:var(--dsw-alias-bg-base); color:var(--dsw-alias-label-primary); font-size:13px; }
-.dsb-header { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--dsw-alias-border-l1); }
-.dsb-heading { min-width:0; }
-.dsb-title { font-size:15px; font-weight:600; letter-spacing:0.01em; }
-.dsb-sub { margin-top:2px; color:var(--dsw-alias-label-secondary); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.dsb-actions { margin-left:auto; display:flex; align-items:center; gap:10px; flex:0 0 auto; }
-.dsb-live { color:var(--dsw-alias-label-secondary); font-size:11px; display:inline-flex; align-items:center; gap:5px; }
-.dsb-live::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--dsw-alias-state-success-primary); }
-.dsb-live-wait::before { background:var(--dsw-alias-state-warn-primary); }
-.dsb-btn { appearance:none; border:1px solid var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); border-radius:8px; padding:5px 10px; font-size:12px; cursor:pointer; }
-.dsb-btn:hover:not(:disabled) { background:var(--dsw-alias-bg-layer-2); }
-.dsb-btn:disabled { opacity:.6; cursor:default; }
-.dsb-error-strip { padding:8px 18px; color:var(--dsw-alias-state-error-primary); border-bottom:1px solid var(--dsw-alias-border-l1); font-size:12px; }
-.dsb-center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:32px; text-align:center; color:var(--dsw-alias-label-secondary); }
-.dsb-center-inline { padding:20px; }
-.dsb-center-title { color:var(--dsw-alias-label-primary); font-weight:600; font-size:14px; }
-.dsb-body { flex:1; min-height:0; display:flex; }
-.dsb-list { width:300px; flex:0 0 300px; min-height:0; overflow:auto; padding:6px; background:var(--dsw-alias-bg-layer-1); border-right:1px solid var(--dsw-alias-border-l1); }
-.dsb-thread { width:100%; display:flex; align-items:flex-start; gap:10px; text-align:left; padding:10px; border:1px solid transparent; border-radius:10px; background:transparent; color:inherit; cursor:pointer; font:inherit; }
-.dsb-thread:hover { background:var(--dsw-alias-bg-layer-2); }
-.dsb-thread[data-active="true"] { background:color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, var(--dsw-alias-bg-layer-1)); border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 42%, var(--dsw-alias-border-l1)); box-shadow:inset 3px 0 0 var(--dsw-alias-brand-primary); }
-.dsb-thread[data-active="true"] .dsb-name { color:var(--dsw-alias-brand-primary); }
-.dsb-thread[data-active="true"] .dsb-avatar { background:var(--dsw-alias-brand-primary); border-color:var(--dsw-alias-brand-primary); color:var(--dsw-alias-bg-base); }
-.dsb-avatar { width:28px; height:28px; flex:0 0 28px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-size:12px; font-weight:600; color:var(--dsw-alias-brand-primary); background:color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, var(--dsw-alias-bg-layer-2)); border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, var(--dsw-alias-border-l1)); }
-.dsb-avatar-lg { width:34px; height:34px; flex-basis:34px; font-size:14px; }
-.dsb-thread-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
-.dsb-row { display:flex; align-items:center; gap:6px; min-width:0; }
-.dsb-name { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
-.dsb-time { margin-left:auto; flex:0 0 auto; color:var(--dsw-alias-label-secondary); font-size:11px; }
-.dsb-tag { flex:0 0 auto; font-size:10px; line-height:15px; padding:0 6px; border-radius:999px; color:var(--dsw-alias-brand-primary); border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 38%, var(--dsw-alias-border-l1)); }
-.dsb-roles { display:flex; gap:4px; flex-wrap:wrap; }
-.dsb-role { display:inline-flex; align-items:center; padding:0 6px; border:1px solid var(--dsw-alias-border-l1); border-radius:999px; color:var(--dsw-alias-label-secondary); font-size:10px; line-height:16px; }
-.dsb-preview { color:var(--dsw-alias-label-secondary); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.dsb-chat { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--dsw-alias-bg-base); }
-.dsb-chat-head { display:flex; align-items:center; gap:10px; padding:12px 18px; border-bottom:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-base); }
-.dsb-head-main { min-width:0; }
-.dsb-head-main .dsb-name { font-size:14px; }
-.dsb-messages { flex:1; min-height:0; overflow:auto; padding:16px 18px 22px; display:flex; flex-direction:column; gap:10px; }
-.dsb-history { position:sticky; top:0; z-index:2; align-self:center; display:inline-flex; align-items:center; gap:6px; margin-bottom:4px; padding:5px 12px; border:1px dashed var(--dsw-alias-border-l2); border-radius:999px; background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-secondary); font-size:11px; cursor:pointer; }
-.dsb-history:hover { color:var(--dsw-alias-label-primary); }
-.dsb-day { align-self:center; margin:4px 0 2px; padding:2px 10px; border-radius:999px; background:var(--dsw-alias-bg-layer-2); color:var(--dsw-alias-label-secondary); font-size:11px; }
-.dsb-msg { display:flex; flex-direction:column; gap:4px; max-width:78%; }
-.dsb-msg[data-side="right"] { align-self:flex-end; align-items:flex-end; }
-.dsb-meta { display:flex; align-items:center; gap:6px; color:var(--dsw-alias-label-secondary); font-size:11px; }
-.dsb-who { color:var(--dsw-alias-label-primary); font-weight:600; }
-.dsb-bubble { border:1px solid var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-2); border-radius:12px 12px 12px 4px; padding:9px 12px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
-.dsb-msg[data-side="right"] .dsb-bubble { background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, var(--dsw-alias-bg-layer-1)); border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 48%, var(--dsw-alias-border-l1)); border-radius:12px 12px 4px 12px; }
-.dsb-msg[data-side="right"] .dsb-who { color:var(--dsw-alias-brand-primary); }
-.dsb-link { appearance:none; border:0; background:none; padding:0 4px; color:var(--dsw-alias-brand-primary); font:inherit; font-size:11px; cursor:pointer; }
-.dsb-msg-foot { display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:var(--dsw-alias-label-secondary); font-size:10px; }
-.dsb-chip { padding:0 6px; line-height:16px; border-radius:999px; border:1px solid var(--dsw-alias-border-l1); }
-.dsb-kind-request { color:var(--dsw-alias-brand-primary); border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 40%, var(--dsw-alias-border-l1)); }
-.dsb-kind-reply { color:var(--dsw-alias-state-success-primary); }
-.dsb-kind-notice { color:var(--dsw-alias-state-warn-primary); }
-.dsb-kind-control { color:var(--dsw-alias-state-idle-primary); }
-.dsb-status-pending, .dsb-status-delivering { color:var(--dsw-alias-state-warn-primary); }
-.dsb-status-failed, .dsb-status-expired { color:var(--dsw-alias-state-error-primary); }
-.dsb-thread-tag { font-family:var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.dsb-root {
+  --dsb-bg:#F7F8FA; --dsb-panel:#FFFFFF; --dsb-item:#FFFFFF; --dsb-item-hover:#F2F3F5;
+  --dsb-item-active:#E7EDFF; --dsb-chat:#FFFFFF; --dsb-lead:#F2F3F5; --dsb-bridge:#165DFF;
+  --dsb-text:#1D2129; --dsb-muted:#86909C; --dsb-code-bg:#1D2129; --dsb-code-text:#F2F3F5;
+  --dsb-input:#FFFFFF; --dsb-focus:#165DFF; --dsb-line:#E5E6EB; --dsb-tag-bg:#FFFFFF;
+  --dsb-scroll:#C9CDD4; --dsb-scroll-hover:#A9AEB8;
+  height:100%; min-height:320px; padding:0 12px 12px; background:var(--dsb-bg); color:var(--dsb-text);
+  display:flex; flex-direction:column; min-height:0; box-sizing:border-box;
+  font-family:Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+body[data-ds-dark-theme] .dsb-root {
+  --dsb-bg:#17171A; --dsb-panel:#232324; --dsb-item:#232324; --dsb-item-hover:#2E2E30;
+  --dsb-item-active:#253557; --dsb-chat:#1D1D1F; --dsb-lead:#2E2E30; --dsb-bridge:#165DFF;
+  --dsb-text:#F2F3F5; --dsb-muted:#86909C; --dsb-code-bg:#141414; --dsb-code-text:#E5E6EB;
+  --dsb-input:#232324; --dsb-focus:#165DFF; --dsb-line:#2E2E30; --dsb-tag-bg:#232324;
+  --dsb-scroll:#4E4E52; --dsb-scroll-hover:#63636A;
+}
+.dsb-root *, .dsb-root *::before, .dsb-root *::after { box-sizing:border-box; }
+.dsb-topbar { height:56px; flex:0 0 56px; display:flex; align-items:center; gap:12px; padding:0 4px; }
+.dsb-brand { font-size:16px; font-weight:600; letter-spacing:.01em; }
+.dsb-top-actions { margin-left:auto; display:flex; align-items:center; gap:12px; }
+.dsb-live { display:inline-flex; align-items:center; gap:6px; color:var(--dsb-muted); font-size:12px; }
+.dsb-live-dot { width:6px; height:6px; border-radius:50%; background:#00B42A; }
+.dsb-icon-btn { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border:0; border-radius:8px; background:transparent; color:var(--dsb-muted); cursor:pointer; transition:background-color .2s ease; }
+.dsb-icon-btn:hover { background:var(--dsb-item-hover); color:var(--dsb-text); }
+.dsb-icon-btn svg { width:16px; height:16px; display:block; }
+.dsb-main { flex:1; min-height:0; display:flex; gap:8px; }
+.dsb-sidebar { width:300px; flex:0 0 300px; min-height:0; display:flex; flex-direction:column; background:var(--dsb-panel); border-radius:12px; overflow:hidden; }
+.dsb-sidebar-head { flex:0 0 auto; display:flex; align-items:baseline; gap:6px; padding:16px 16px 6px; color:var(--dsb-muted); font-size:12px; }
+.dsb-sidebar-head strong { color:var(--dsb-text); font-size:12px; font-weight:600; }
+.dsb-sidebar-head .dsb-count { margin-left:auto; font-variant-numeric:tabular-nums; }
+.dsb-list { flex:1; min-height:0; overflow-y:auto; padding:2px 0 8px; }
+.dsb-thread { display:block; width:calc(100% - 16px); margin:4px 8px; padding:12px 14px; border:0; border-radius:8px; background:var(--dsb-item); color:var(--dsb-text); text-align:left; font:inherit; cursor:pointer; transition:background-color .2s ease; }
+.dsb-thread:hover { background:var(--dsb-item-hover); }
+.dsb-thread[data-active="true"] { background:var(--dsb-item-active); }
+.dsb-thread-row { display:flex; align-items:baseline; gap:8px; min-width:0; }
+.dsb-thread-title { font-size:14px; font-weight:500; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dsb-thread-time { margin-left:auto; flex:0 0 auto; color:var(--dsb-muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.dsb-thread-preview { margin-top:4px; color:var(--dsb-muted); font-size:12px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dsb-chat { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--dsb-chat); border-radius:12px; overflow:hidden; }
+.dsb-chat-head { flex:0 0 auto; padding:18px 24px 4px; }
+.dsb-chat-title { font-size:14px; font-weight:600; line-height:22px; }
+.dsb-chat-sub { margin-top:2px; color:var(--dsb-muted); font-size:12px; line-height:18px; }
+.dsb-messages { flex:1; min-height:0; overflow-y:auto; padding:6px 24px 20px; display:flex; flex-direction:column; gap:12px; }
+.dsb-date { align-self:center; margin:2px 0 4px; padding:2px 10px; border-radius:999px; background:var(--dsb-lead); color:var(--dsb-muted); font-size:12px; line-height:18px; }
+.dsb-history { position:sticky; top:0; z-index:2; align-self:center; display:inline-flex; align-items:center; gap:6px; margin:0 0 4px; padding:3px 12px; border:1px dashed var(--dsb-line); border-radius:999px; background:var(--dsb-chat); color:var(--dsb-muted); font-size:12px; line-height:18px; cursor:pointer; }
+.dsb-history:hover { color:var(--dsb-text); }
+.dsb-card { width:100%; max-width:860px; border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+.dsb-card[data-variant="lead"] { background:var(--dsb-lead); color:var(--dsb-text); --dsb-card-muted:var(--dsb-muted); --dsb-card-tag-bg:var(--dsb-tag-bg); --dsb-card-tag-text:var(--dsb-muted); --dsb-card-dot:var(--dsb-muted); }
+.dsb-card[data-variant="bridge"] { background:var(--dsb-bridge); color:#FFFFFF; --dsb-card-muted:rgba(255,255,255,.72); --dsb-card-tag-bg:rgba(255,255,255,.16); --dsb-card-tag-text:#FFFFFF; --dsb-card-dot:rgba(255,255,255,.72); }
+.dsb-card-head { display:flex; align-items:center; gap:8px; min-width:0; }
+.dsb-sender { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; line-height:18px; }
+.dsb-sender-dot { width:6px; height:6px; border-radius:50%; background:var(--dsb-card-dot); }
+.dsb-tag { margin-left:auto; flex:0 0 auto; padding:1px 8px; border-radius:999px; background:var(--dsb-card-tag-bg); color:var(--dsb-card-tag-text); font-size:12px; line-height:18px; }
+.dsb-body { font-size:14px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.dsb-foot { display:flex; align-items:center; gap:8px; color:var(--dsb-card-muted); font-size:12px; line-height:18px; }
+.dsb-foot .dsb-thread-id { margin-left:auto; font-family:"JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-size:12px; }
+.dsb-code { border-radius:6px; background:var(--dsb-code-bg); overflow:hidden; }
+.dsb-code-head { display:flex; align-items:center; gap:8px; padding:8px 12px 0; color:rgba(255,255,255,.5); font-size:11px; line-height:16px; }
+.dsb-copy { margin-left:auto; width:24px; height:24px; display:inline-flex; align-items:center; justify-content:center; border:0; border-radius:6px; background:transparent; color:rgba(255,255,255,.55); cursor:pointer; transition:background-color .2s ease, color .2s ease; }
+.dsb-copy:hover { background:rgba(255,255,255,.08); color:#FFFFFF; }
+.dsb-copy svg { width:14px; height:14px; display:block; }
+.dsb-code pre { margin:0; padding:4px 12px 12px; overflow-x:auto; color:var(--dsb-code-text); font-family:"JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-size:13px; line-height:1.5; }
+.dsb-code code { font:inherit; white-space:pre; }
+.dsb-composer { flex:0 0 auto; padding:12px 20px 18px; border-top:1px solid var(--dsb-line); display:flex; flex-direction:column; gap:6px; }
+.dsb-composer-row { display:flex; gap:10px; align-items:center; }
+.dsb-input { flex:1; min-width:0; height:44px; padding:0 14px; border-radius:10px; border:1px solid var(--dsb-line); background:var(--dsb-input); color:var(--dsb-text); font:inherit; font-size:14px; outline:none; }
+.dsb-input:focus { border-color:var(--dsb-focus); }
+.dsb-input::placeholder { color:var(--dsb-muted); }
+.dsb-send { width:40px; height:40px; flex:0 0 40px; border:0; border-radius:10px; background:var(--dsb-bridge); color:#FFFFFF; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+.dsb-send:disabled { opacity:.5; cursor:default; }
+.dsb-send svg { width:18px; height:18px; display:block; }
+.dsb-send-error { color:var(--dsb-error, #F53F3F); font-size:12px; line-height:18px; }
+.dsb-center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:32px; text-align:center; color:var(--dsb-muted); }
+.dsb-center-title { color:var(--dsb-text); font-weight:600; font-size:14px; }
+.dsb-error-strip { padding:8px 24px; color:#F53F3F; font-size:12px; }
+.dsb-list::-webkit-scrollbar, .dsb-messages::-webkit-scrollbar, .dsb-code pre::-webkit-scrollbar { width:5px; height:5px; }
+.dsb-list::-webkit-scrollbar-track, .dsb-messages::-webkit-scrollbar-track, .dsb-code pre::-webkit-scrollbar-track { background:transparent; }
+.dsb-list::-webkit-scrollbar-thumb, .dsb-messages::-webkit-scrollbar-thumb, .dsb-code pre::-webkit-scrollbar-thumb { background:var(--dsb-scroll); border-radius:999px; }
+.dsb-list::-webkit-scrollbar-thumb:hover, .dsb-messages::-webkit-scrollbar-thumb:hover, .dsb-code pre::-webkit-scrollbar-thumb:hover { background:var(--dsb-scroll-hover); }
 @media (max-width: 760px) {
-  .dsb-body { flex-direction:column; }
-  .dsb-list { width:auto; flex:0 0 auto; max-height:38%; border-right:0; border-bottom:1px solid var(--dsw-alias-border-l1); }
-  .dsb-msg { max-width:92%; }
-  .dsb-live { display:none; }
+  .dsb-main { flex-direction:column; }
+  .dsb-sidebar { width:auto; flex:0 0 auto; max-height:38%; }
+  .dsb-chat-head { padding:14px 16px 4px; }
+  .dsb-messages { padding:6px 16px 16px; }
+  .dsb-composer { padding:10px 12px 14px; }
 }
 `
 
@@ -166,11 +182,6 @@ window.__ModuleLoader__.load({
     function summarize(value, max) {
       const text = String(value ?? '').replace(/\s+/g, ' ').trim()
       return text.length <= max ? text : `${text.slice(0, max - 1)}…`
-    }
-
-    /** @param {string} id */
-    function shortId(id) {
-      return id.length <= 20 ? id : `${id.slice(0, 8)}…${id.slice(-6)}`
     }
 
     /** @param {number} value */
@@ -191,18 +202,26 @@ window.__ModuleLoader__.load({
       return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
     }
 
-    /** @param {string} value @param {string} fallback */
-    function firstCharacter(value, fallback) {
-      const characters = [...String(value ?? '')]
-      return characters.length === 0 ? fallback : characters[0].toUpperCase()
+    /** Split one message body into text and fenced code segments. */
+    function splitCode(text) {
+      const parts = []
+      const regex = /```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g
+      let last = 0
+      let match
+      while ((match = regex.exec(text)) !== null) {
+        if (match.index > last) parts.push({ type: 'text', text: text.slice(last, match.index) })
+        parts.push({
+          type: 'code',
+          language: (match[1] || 'PHP').toUpperCase(),
+          code: match[2].replace(/\n$/, ''),
+        })
+        last = regex.lastIndex
+      }
+      if (last < text.length) parts.push({ type: 'text', text: text.slice(last) })
+      return parts
     }
 
-    /**
-     * Read server-sent event frames from one streaming response.
-     * @param {ReadableStream<Uint8Array>} body
-     * @param {(data: string) => void} onData
-     * @param {AbortSignal} signal
-     */
+    /** @param {ReadableStream<Uint8Array>} body @param {(data: string) => void} onData @param {AbortSignal} signal */
     async function readEventStream(body, onData, signal) {
       const reader = body.getReader()
       const decoder = new TextDecoder()
@@ -249,7 +268,9 @@ window.__ModuleLoader__.load({
       const [connection, setConnection] = useState('connecting')
       const [selectedId, setSelectedId] = useState(null)
       const [expandedHistory, setExpandedHistory] = useState(false)
-      const [expandedMessages, setExpandedMessages] = useState(() => new Set())
+      const [draft, setDraft] = useState('')
+      const [sending, setSending] = useState(false)
+      const [sendError, setSendError] = useState(null)
       const mounted = useRef(true)
       const hasData = useRef(false)
       const messagesRef = useRef(null)
@@ -257,10 +278,7 @@ window.__ModuleLoader__.load({
       const load = useCallback(async () => {
         setRefreshing(true)
         try {
-          const response = await fetch(SNAPSHOT_URL, {
-            headers: { accept: 'application/json' },
-            cache: 'no-store',
-          })
+          const response = await fetch(SNAPSHOT_URL, { headers: { accept: 'application/json' }, cache: 'no-store' })
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
           const data = await response.json()
           if (!mounted.current) return
@@ -319,9 +337,7 @@ window.__ModuleLoader__.load({
           } catch (failure) {
             if (disposed) return
             setConnection('reconnecting')
-            if (!hasData.current) {
-              setError(failure instanceof Error ? failure.message : String(failure))
-            }
+            if (!hasData.current) setError(failure instanceof Error ? failure.message : String(failure))
             const delay = Math.min(15_000, 800 * 2 ** Math.min(attempt, 4))
             attempt += 1
             retryTimer = setTimeout(() => {
@@ -357,33 +373,35 @@ window.__ModuleLoader__.load({
         const info = sessions[id]
         return info !== undefined && typeof info.title === 'string' && info.title !== ''
           ? info.title
-          : shortId(id)
+          : `${id.slice(0, 8)}…${id.slice(-6)}`
       }
-      const roleLabel = role => role === 'direct'
-        ? translate('role.direct', 'direct')
-        : String(role)
-      const participantLabel = participant => nameOf(participant.sessionId) ?? roleLabel(participant.role)
+      const displayRole = role => role === 'lead'
+        ? translate('role.lead', 'Lead')
+        : role === 'direct'
+          ? translate('role.direct', 'Bridge')
+          : String(role)
       const peerOf = conversation => {
         if (currentSessionId === null) return null
         return conversation.participants.find(participant => participant.sessionId !== currentSessionId) ?? null
       }
       const conversationLabel = conversation => {
         const peer = peerOf(conversation)
-        if (peer !== null) return nameOf(peer.sessionId) ?? roleLabel(peer.role)
-        return conversation.participants.map(participantLabel).join(' ⇄ ')
+        if (peer !== null) return nameOf(peer.sessionId) ?? displayRole(peer.role)
+        return conversation.participants.map(participant => nameOf(participant.sessionId) ?? displayRole(participant.role)).join(' ⇄ ')
       }
       const kindLabel = kind => translate(`kind.${kind}`, String(kind))
-      const statusLabel = status => translate(`status.${status}`, String(status))
 
       const todayStart = new Date()
       todayStart.setHours(0, 0, 0, 0)
-      const olderMessages = active === undefined
-        ? []
-        : active.messages.filter(message => message.createdAt < todayStart.getTime())
-      const todayMessages = active === undefined
-        ? []
-        : active.messages.filter(message => message.createdAt >= todayStart.getTime())
+      const olderMessages = active === undefined ? [] : active.messages.filter(message => message.createdAt < todayStart.getTime())
+      const todayMessages = active === undefined ? [] : active.messages.filter(message => message.createdAt >= todayStart.getTime())
       const visibleMessages = expandedHistory ? (active?.messages ?? []) : todayMessages
+      const peer = active === undefined ? null : peerOf(active)
+      const canSend = active !== undefined
+        && peer !== null
+        && typeof peer.sessionId === 'string'
+        && peer.sessionId !== ''
+        && currentSessionId !== null
 
       useEffect(() => {
         const node = messagesRef.current
@@ -394,17 +412,15 @@ window.__ModuleLoader__.load({
         if (id === selectedId) return
         setSelectedId(id)
         setExpandedHistory(false)
-        setExpandedMessages(new Set())
+        setSendError(null)
       }
-      const toggleMessage = id => {
-        setExpandedMessages(previous => {
-          const next = new Set(previous)
-          if (next.has(id)) next.delete(id)
-          else next.add(id)
-          return next
-        })
+      const copyCode = async code => {
+        try {
+          await navigator.clipboard.writeText(code)
+        } catch {
+          // Clipboard permission may be denied; the icon remains a visual cue.
+        }
       }
-
       const dayLabel = value => {
         const date = new Date(value)
         const today = new Date()
@@ -416,31 +432,55 @@ window.__ModuleLoader__.load({
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
       }
 
-      const header = h('div', { className: 'dsb-header' },
-        h('div', { className: 'dsb-heading' },
-          h('div', { className: 'dsb-title' }, translate('title', 'Session bridge')),
-          h('div', { className: 'dsb-sub' },
-            `${translate('subtitle', 'Every session conversation carried by the bridge')} · `
-            + `${ordered.length} ${translate('count.conversations', 'conversations')} · `
-            + `${totalMessages} ${translate('count.messages', 'messages')}`,
+      const submit = async event => {
+        event.preventDefault()
+        if (!canSend || sending) return
+        const text = draft.trim()
+        if (text === '') return
+        setSending(true)
+        setSendError(null)
+        try {
+          const response = await fetch(SEND_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({ fromSessionId: currentSessionId, toSessionId: peer.sessionId, text }),
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`)
+          setDraft('')
+        } catch (failure) {
+          setSendError(`${translate('send.failed', 'Could not send')}: ${failure instanceof Error ? failure.message : String(failure)}`)
+        } finally {
+          setSending(false)
+        }
+      }
+
+      const header = h('div', { className: 'dsb-topbar' },
+        h('div', { className: 'dsb-brand' }, translate('title', 'Session bridge')),
+        h('div', { className: 'dsb-top-actions' },
+          h('span', { className: 'dsb-live' },
+            h('span', { className: 'dsb-live-dot' }),
+            connection === 'live' ? translate('live', 'Live') : translate('reconnecting', 'Reconnecting…'),
           ),
-        ),
-        h('div', { className: 'dsb-actions' },
-          h('span', { className: `dsb-live${connection === 'live' ? '' : ' dsb-live-wait'}` },
-            connection === 'live' ? translate('live', 'Live') : translate('reconnecting', 'Reconnecting…')),
           h('button', {
             type: 'button',
-            className: 'dsb-btn',
+            className: 'dsb-icon-btn',
+            title: translate('refresh', 'Refresh'),
+            'aria-label': translate('refresh', 'Refresh'),
             onClick: () => { void load() },
             disabled: refreshing,
-          }, refreshing ? translate('refreshing', 'Refreshing…') : translate('refresh', 'Refresh')),
+          },
+            h('svg', { viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' },
+              h('path', { d: 'M13.2 8a5.2 5.2 0 1 1-1.6-3.75' }),
+              h('path', { d: 'M13.2 2.8v3.2H10' }),
+            ),
+          ),
         ),
       )
 
       const errorStrip = error !== null && snapshot !== null
         ? h('div', { className: 'dsb-error-strip' }, `${translate('error', 'Could not read bridge messages')}: ${error}`)
         : null
-
       const center = (title, hint, extra) => h('div', { className: 'dsb-center' },
         h('div', { className: 'dsb-center-title' }, title),
         hint === null ? null : h('div', null, hint),
@@ -451,74 +491,54 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dsb-root' }, h('style', null, CSS), header,
           center(translate('loading', 'Reading bridge messages…'), null))
       }
-
       if (snapshot === null) {
         return h('div', { className: 'dsb-root' }, h('style', null, CSS), header,
           center(
             translate('error', 'Could not read bridge messages'),
             error ?? null,
-            h('button', {
-              type: 'button',
-              className: 'dsb-btn',
-              onClick: () => { void load() },
-              disabled: refreshing,
-            }, translate('retry', 'Retry')),
+            h('button', { type: 'button', className: 'dsb-icon-btn', onClick: () => { void load() }, disabled: refreshing },
+              translate('retry', 'Retry')),
           ))
       }
-
       if (ordered.length === 0) {
         return h('div', { className: 'dsb-root' }, h('style', null, CSS), header, errorStrip,
-          center(
-            translate('empty.title', 'No bridge messages yet'),
-            translate('empty.hint', 'Mention another session with @ and send a message; the conversation appears here.'),
-          ))
+          center(translate('empty.title', 'No bridge messages yet'),
+            translate('empty.hint', 'Mention another session with @ and send a message; the conversation appears here.')))
       }
 
-      const list = h('div', { className: 'dsb-list', role: 'list' },
-        ordered.map(conversation => {
-          const peer = peerOf(conversation)
-          const label = conversationLabel(conversation)
-          const last = conversation.messages[conversation.messages.length - 1]
-          return h('button', {
-            key: conversation.id,
-            type: 'button',
-            role: 'listitem',
-            className: 'dsb-thread',
-            'data-active': String(conversation.id === active?.id),
-            title: conversation.id,
-            onClick: () => selectConversation(conversation.id),
-          },
-            h('span', { className: 'dsb-avatar' }, firstCharacter(label, '?')),
-            h('span', { className: 'dsb-thread-main' },
-              h('span', { className: 'dsb-row' },
-                h('span', { className: 'dsb-name' }, label),
-                peer === null ? null : h('span', { className: 'dsb-tag' }, translate('current.tag', 'current')),
-                h('span', { className: 'dsb-time' }, formatClock(conversation.updatedAt)),
+      const list = h('aside', { className: 'dsb-sidebar' },
+        h('div', { className: 'dsb-sidebar-head' },
+          h('strong', null, translate('list.title', 'Conversations')),
+          h('span', { className: 'dsb-count' }, String(ordered.length)),
+        ),
+        h('nav', { className: 'dsb-list', role: 'list' },
+          ordered.map(conversation => {
+            const last = conversation.messages[conversation.messages.length - 1]
+            return h('button', {
+              key: conversation.id,
+              type: 'button',
+              role: 'listitem',
+              className: 'dsb-thread',
+              'data-active': String(conversation.id === active?.id),
+              title: conversation.id,
+              onClick: () => selectConversation(conversation.id),
+            },
+              h('span', { className: 'dsb-thread-row' },
+                h('span', { className: 'dsb-thread-title' }, conversationLabel(conversation)),
+                h('span', { className: 'dsb-thread-time' }, formatClock(conversation.updatedAt)),
               ),
-              h('span', { className: 'dsb-preview' },
-                last === undefined ? '' : `${roleLabel(last.fromRole)}: ${summarize(last.content, 80)}`),
-              h('span', { className: 'dsb-roles' },
-                conversation.participants.map((participant, index) => h('span', {
-                  key: `${participant.role}:${participant.sessionId ?? index}`,
-                  className: 'dsb-role',
-                }, roleLabel(participant.role))),
-              ),
-            ),
-          )
-        }),
+              h('span', { className: 'dsb-thread-preview' },
+                last === undefined ? '' : `${displayRole(last.fromRole)}: ${summarize(last.content, 80)}`),
+            )
+          }),
+        ),
       )
 
-      let chat = null
+      let chat = center(translate('empty.title', 'No bridge messages yet'), null)
       if (active !== undefined) {
-        const peer = peerOf(active)
-        const currentInConversation = peer !== null
-        const initiator = active.messages[0]?.fromSessionId
-        const sideOf = message => currentInConversation
-          ? (message.fromSessionId === currentSessionId ? 'right' : 'left')
-          : (message.fromSessionId === initiator ? 'right' : 'left')
         const chatLabel = conversationLabel(active)
         const chatSubtitle = [
-          peer === null ? null : roleLabel(peer.role),
+          peer === null ? null : displayRole(peer.role),
           `${active.threadIds.length} ${translate('count.threads', 'threads')}`,
           `${active.messages.length} ${translate('count.messages', 'messages')}`,
         ].filter(part => part !== null).join(' · ')
@@ -536,86 +556,113 @@ window.__ModuleLoader__.load({
             h('span', null, expandedHistory ? '▴' : '▾'),
           )
 
-        const renderMessage = message => {
-          const content = String(message.content ?? '')
-          const truncated = content.length > MESSAGE_LIMIT && !expandedMessages.has(message.id)
-          const shown = truncated ? `${content.slice(0, MESSAGE_LIMIT - 1)}…` : content
-          const showStatus = ['pending', 'delivering', 'failed', 'expired'].includes(message.status)
-          return h('div', {
-            key: message.id,
-            className: 'dsb-msg',
-            'data-side': sideOf(message),
-          },
-            h('div', { className: 'dsb-meta' },
-              h('span', { className: 'dsb-who' },
-                nameOf(message.fromSessionId) ?? translate('unknown.session', 'Unknown session')),
-              h('span', { className: 'dsb-role' }, roleLabel(message.fromRole)),
-              h('span', { className: 'dsb-time' }, formatClock(message.createdAt)),
-            ),
-            h('div', { className: 'dsb-bubble' },
-              h('span', null, shown),
-              content.length > MESSAGE_LIMIT
-                ? h('button', {
-                  type: 'button',
-                  className: 'dsb-link',
-                  onClick: () => toggleMessage(message.id),
-                }, truncated ? translate('message.expand', 'Expand') : translate('message.collapse', 'Collapse'))
-                : null,
-            ),
-            h('div', { className: 'dsb-msg-foot' },
-              h('span', { className: `dsb-chip dsb-kind-${message.kind}` }, kindLabel(message.kind)),
-              message.priority === 'high'
-                ? h('span', { className: 'dsb-chip' }, translate('priority.high', 'high priority'))
-                : null,
-              showStatus
-                ? h('span', { className: `dsb-chip dsb-status-${message.status}` }, statusLabel(message.status))
-                : null,
-              active.threadIds.length > 1
-                ? h('span', { className: 'dsb-chip dsb-thread-tag', title: message.threadId },
-                  `#${shortId(message.threadId)}`)
-                : null,
-            ),
-          )
-        }
-
         const rendered = []
         let lastDay = null
         for (const message of visibleMessages) {
           const key = dayKey(message.createdAt)
           if (key !== lastDay) {
-            rendered.push(h('div', { key: `day-${key}`, className: 'dsb-day' }, dayLabel(message.createdAt)))
+            rendered.push(h('div', { key: `day-${key}`, className: 'dsb-date' }, dayLabel(message.createdAt)))
             lastDay = key
           }
-          rendered.push(renderMessage(message))
+          const variant = message.kind === 'reply' ? 'bridge' : 'lead'
+          const parts = splitCode(String(message.content ?? ''))
+          const body = []
+          parts.forEach((part, index) => {
+            if (part.type === 'text') {
+              const text = part.text.trim()
+              if (text !== '') body.push(h('div', { key: `text-${index}`, className: 'dsb-body' }, text))
+              return
+            }
+            body.push(h('div', { key: `code-${index}`, className: 'dsb-code' },
+              h('div', { className: 'dsb-code-head' },
+                h('span', null, part.language),
+                h('button', {
+                  type: 'button',
+                  className: 'dsb-copy',
+                  title: translate('copy', 'Copy code'),
+                  'aria-label': translate('copy', 'Copy code'),
+                  onClick: () => { void copyCode(part.code) },
+                },
+                  h('svg', { viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinejoin: 'round' },
+                    h('rect', { x: 5.5, y: 5.5, width: 7, height: 7, rx: 1.2 }),
+                    h('path', { d: 'M10.5 5.5V4.2A1.2 1.2 0 0 0 9.3 3H4.2A1.2 1.2 0 0 0 3 4.2v5.1a1.2 1.2 0 0 0 1.2 1.2h1.3' }),
+                  ),
+                ),
+              ),
+              h('pre', null, h('code', null, part.code)),
+            ))
+          })
+          rendered.push(h('article', {
+            key: message.id,
+            className: 'dsb-card',
+            'data-variant': variant,
+          },
+            h('header', { className: 'dsb-card-head' },
+              h('span', { className: 'dsb-sender' },
+                h('span', { className: 'dsb-sender-dot' }),
+                displayRole(message.fromRole),
+              ),
+              h('span', { className: 'dsb-tag' }, kindLabel(message.kind)),
+            ),
+            body,
+            h('footer', { className: 'dsb-foot' },
+              h('span', null, formatClock(message.createdAt)),
+              h('span', { className: 'dsb-thread-id' }, `#${message.threadId}`),
+            ),
+          ))
         }
 
-        chat = h('div', { className: 'dsb-chat' },
-          h('div', { className: 'dsb-chat-head' },
-            h('span', { className: 'dsb-avatar dsb-avatar-lg' }, firstCharacter(chatLabel, '?')),
-            h('div', { className: 'dsb-head-main' },
-              h('div', { className: 'dsb-row' },
-                h('span', { className: 'dsb-name' }, chatLabel),
-                currentInConversation
-                  ? h('span', { className: 'dsb-tag' }, translate('current.tag', 'current'))
-                  : null,
-              ),
-              h('div', { className: 'dsb-sub' }, chatSubtitle),
-            ),
+        const placeholder = !canSend
+          ? peer === null
+            ? translate('send.blocked', 'Current session is not in this conversation')
+            : translate('send.unbound', 'The peer session is not bound yet')
+          : translate('send.placeholder', 'Type a message, Enter to send…')
+
+        chat = h('section', { className: 'dsb-chat' },
+          h('header', { className: 'dsb-chat-head' },
+            h('div', { className: 'dsb-chat-title' }, chatLabel),
+            h('div', { className: 'dsb-chat-sub' }, chatSubtitle),
           ),
           h('div', { className: 'dsb-messages', ref: messagesRef },
             historyBar,
             visibleMessages.length === 0
-              ? h('div', { className: 'dsb-center dsb-center-inline' },
+              ? h('div', { className: 'dsb-center' },
                 h('div', { className: 'dsb-center-title' }, translate('history.emptyToday', 'No messages today yet')),
                 h('div', null, translate('history.hint', 'Expand earlier messages to read the history.')),
               )
               : rendered,
           ),
+          h('form', { className: 'dsb-composer', onSubmit: submit },
+            h('div', { className: 'dsb-composer-row' },
+              h('input', {
+                className: 'dsb-input',
+                type: 'text',
+                value: draft,
+                placeholder,
+                disabled: !canSend || sending,
+                'aria-label': translate('send.placeholder', 'Type a message'),
+                onChange: event => setDraft(event.target.value),
+              }),
+              h('button', {
+                type: 'submit',
+                className: 'dsb-send',
+                disabled: !canSend || sending || draft.trim() === '',
+                title: translate('send.button', 'Send'),
+                'aria-label': translate('send.button', 'Send'),
+              },
+                h('svg', { viewBox: '0 0 18 18', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' },
+                  h('path', { d: 'M3 9h11' }),
+                  h('path', { d: 'M9.5 4.5 14 9l-4.5 4.5' }),
+                ),
+              ),
+            ),
+            sendError === null ? null : h('div', { className: 'dsb-send-error' }, sendError),
+          ),
         )
       }
 
       return h('div', { className: 'dsb-root' }, h('style', null, CSS), header, errorStrip,
-        h('div', { className: 'dsb-body' }, list, chat ?? center(translate('empty.title', 'No bridge messages yet'), null)))
+        h('div', { className: 'dsb-main' }, list, chat))
     }
 
     return {

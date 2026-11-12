@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Asynchronous, durable message bridge between independent DeepSeek Harness sessions.",
   "type": "module",
@@ -25,7 +25,8 @@
     "cordis.patch.yml",
     "README.md",
     "SPEC.md",
-    "tsconfig.json"
+    "tsconfig.json",
+    "design"
   ],
   "dsh": {
     "bundle": {

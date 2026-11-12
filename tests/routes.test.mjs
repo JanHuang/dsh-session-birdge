@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import test from 'node:test'
-import { buildSnapshot, EVENTS_PATH, registerBridgeRoutes, SNAPSHOT_PATH } from '../src/host/routes.js'
+import { buildSnapshot, EVENTS_PATH, registerBridgeRoutes, SEND_PATH, SNAPSHOT_PATH } from '../src/host/routes.js'
 import { BridgeStore } from '../src/host/store.js'
 import { seedMessage, tempDirectory } from './helpers.mjs'
 
@@ -88,6 +88,7 @@ test('buildSnapshot keeps role-only participants for an unbound destination', ()
 
 function fakeRoutes(store) {
   const routes = new Map()
+  const kicks = { count: 0 }
   const ctx = {
     connection: {
       fetch: {
@@ -100,19 +101,33 @@ function fakeRoutes(store) {
     effect: execute => execute(),
     sessionController: {
       list: async () => ({
-        items: [{ sessionId: 'session-reviewer', projections: { values: { title: 'Reviewer' } } }],
+        items: [
+          { sessionId: 'session-lead' },
+          { sessionId: 'session-reviewer', projections: { values: { title: 'Reviewer' } } },
+        ],
       }),
     },
   }
-  registerBridgeRoutes(ctx, { store })
-  return routes
+  registerBridgeRoutes(ctx, {
+    store,
+    config: {
+      security: { allowDirectSessionTargets: true },
+      limits: { maxContentChars: 8_000, maxPendingPerSession: 50, messageTtlMs: 86_400_000 },
+    },
+    policy: {
+      resolveCaller: () => null,
+      checkRate: () => ({ allowed: true }),
+    },
+    worker: { kick: () => { kicks.count += 1 } },
+  })
+  return { routes, kicks }
 }
 
 test('the snapshot route reads messages and session labels', async t => {
   const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
   t.after(() => store.close())
   seedMessage({ store, clock: { now: () => 1_000_000 } }, { id: 'msg_route', content: 'route body' })
-  const routes = fakeRoutes(store)
+  const { routes } = fakeRoutes(store)
   const route = routes.get(SNAPSHOT_PATH)
   assert.deepEqual(route.methods, ['GET'])
 
@@ -128,7 +143,7 @@ test('the snapshot route reads messages and session labels', async t => {
 test('the event route streams an initial snapshot and pushes new messages', async t => {
   const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
   t.after(() => store.close())
-  const routes = fakeRoutes(store)
+  const { routes } = fakeRoutes(store)
   const route = routes.get(EVENTS_PATH)
   assert.deepEqual(route.methods, ['GET'])
 
@@ -172,4 +187,46 @@ test('the event route streams an initial snapshot and pushes new messages', asyn
 
   abort.abort()
   await reader.cancel().catch(() => {})
+})
+
+
+test('the send route queues one request and kicks delivery', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  const { routes, kicks } = fakeRoutes(store)
+  const route = routes.get(SEND_PATH)
+  assert.deepEqual(route.methods, ['POST'])
+
+  const response = await route.fetch(new Request('http://127.0.0.1:1/api/session-bridge/send', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      fromSessionId: 'session-lead',
+      toSessionId: 'session-reviewer',
+      text: 'hello from the view',
+    }),
+  }))
+  assert.equal(response.status, 201)
+  const body = await response.json()
+  assert.equal(body.status, 'pending')
+  const stored = store.getMessage(body.messageId)
+  assert.equal(stored.content, 'hello from the view')
+  assert.equal(stored.toSessionId, 'session-reviewer')
+  assert.equal(kicks.count, 1)
+})
+
+test('the send route rejects invalid requests', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  const { routes } = fakeRoutes(store)
+  const route = routes.get(SEND_PATH)
+  const send = body => route.fetch(new Request('http://127.0.0.1:1/api/session-bridge/send', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+
+  assert.equal((await send({ fromSessionId: 'session-lead', toSessionId: 'session-lead', text: 'x' })).status, 400)
+  assert.equal((await send({ fromSessionId: 'session-lead', toSessionId: 'session-reviewer', text: '   ' })).status, 400)
+  assert.equal((await send({ fromSessionId: 'session-lead', toSessionId: 'missing', text: 'x' })).status, 404)
 })

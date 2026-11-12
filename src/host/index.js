@@ -37,7 +37,7 @@ export function apply(ctx, rawConfig) {
     // The snapshot route is only meaningful with a Web connection; profiles
     // without one keep the tools and delivery worker running.
     ctx.inject(['connection'], connectionCtx => {
-      registerBridgeRoutes(connectionCtx, { store })
+      registerBridgeRoutes(connectionCtx, { store, policy, config, worker })
     })
     ctx.effect(() => {
       const disposeTools = registerTools(ctx, { store, policy, worker, config })

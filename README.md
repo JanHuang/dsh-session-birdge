@@ -77,26 +77,30 @@ prompt request id, so a re-delivered prompt is accepted once.
 
 ## Bridge view
 
-The bundle ships a Client half. After the page loads the plugin, a **Bridge**
-tab (`会话桥`) appears in the conversation View row after **Trajectory**
-(`轨迹`). One card is one pair of sessions: every thread and historical message
-between that pair is merged into a single chat instead of one card per thread.
-The list shows participants, last message, and time, with conversations of the
-current session first. The chat shows sender, role, kind, priority, delivery
-status, and a thread tag when a pair used several threads.
+The bundle ships a Client half. A **Bridge** tab (`会话桥`) appears in the
+conversation View row after **Trajectory** (`轨迹`) and follows the host's
+light/dark theme. The layout is a fixed sidebar plus a chat panel:
 
-Today's messages are visible by default; older history stays collapsed behind
-an **Earlier messages** control. Long messages are shortened to a preview with
-an **Expand** action. New messages arrive over an authenticated server-sent
-event stream and append automatically; there is no polling. A manual
-**Refresh** button performs a hard resync. The selected conversation uses a
-brand-tinted row with an inset accent, and sender bubbles use a brand tint while
-receiver bubbles use the neutral surface. The view is read-only: send and reply
-from the tools.
+- The left list scrolls independently and uses background fill only — no
+  dividers, borders, or separators. Default, hover, and selected states use
+  `#FFFFFF`/`#F2F3F5`/`#E7EDFF` in light and `#232324`/`#2E2E30`/`#253557` in
+  dark.
+- The right messages area scrolls independently; the composer stays pinned at
+  the bottom. One card is one session pair, so every thread and historical
+  message between that pair lives in the same chat, not a new card per thread.
+- Messages are stream cards, not left/right bubbles: Lead request cards use the
+  neutral surface; Bridge reply cards always use `#165DFF` with white text.
+  Each card carries the sender, a request/reply tag, the message body, a `#thread`
+  id, a time, and any fenced PHP block as a dark code block with a copy action.
+- Today's messages are visible by default; older history stays behind an
+  **Earlier messages** control. A centered date divider separates days.
+- New messages arrive over an authenticated server-sent event stream and append
+  automatically; there is no polling. A manual refresh performs a hard resync.
+- The composer queues a request for the selected peer. It is disabled when the
+  current session is not a participant or the peer has no bound session.
 
-The view reads `/api/session-bridge/snapshot` served by the Host inside the
-Web connection's owner firewall. Open a new chat and use the tools to change
-anything; the panel is a viewer.
+Design previews: [light](design/session-bridge-light.png) ·
+[dark](design/session-bridge-dark.png) · [HTML source](design/session-bridge-chat.html).
 
 ## Tools
 

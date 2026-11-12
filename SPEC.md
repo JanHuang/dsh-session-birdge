@@ -14,11 +14,13 @@
 > - 投递幂等：`sessionController.prompt` 的 `requestId` 直接使用 `messageId`，
 >   目标 Agent 对重复 prompt 去重。
 > - M6 Client 消息面板已实现（v0.2）：在会话 View 行「轨迹」之后注册
->   「会话桥」标签：同一对会话的所有线程合并为一个聊天窗，左侧列全部
->   对话、右侧以聊天窗展示消息，默认显示当天并折叠更早历史；新消息通过
->   `/api/session-bridge/events`（SSE）实时追加，不做定时轮询。
->   数据由 Host 只读路由提供（受 Web 连接 owner 防火墙保护）。
->   面板只读，发送/回复仍走工具。
+>   「会话桥」标签：同一对会话的所有线程合并为一个聊天窗，左侧列表独立
+>   滚动、右侧消息区独立滚动，底部输入栏固定；默认显示当天并折叠更早历史；
+>   新消息通过 `/api/session-bridge/events`（SSE）实时追加，不做定时轮询。
+>   消息为流式卡片：Lead 请求用中性底色，Bridge 回复固定 #165DFF 白字，
+>   代码块深色并带复制；面板跟随宿主 `body[data-ds-dark-theme]` 切换浅/深色。
+>   底部输入栏通过 `/api/session-bridge/send` 排队请求；数据路由受 Web 连接
+>   owner 防火墙保护。
 > - 审计表只记录路由与状态，不记录消息正文。
 > - 实测发现 Host 的 Session 控制面把 `origin: subagent` 的子会话保留给
 >   subagent routing（`session/agent-busy`），因此桥接只面向独立顶层会话：

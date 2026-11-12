@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>会话桥 · Session Bridge</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: #F7F8FA;
+    color: #1D2129;
+  }
+  body[data-ds-dark-theme] { background: #17171A; color: #F2F3F5; }
+
+  .app {
+    --bg: #F7F8FA;
+    --panel: #FFFFFF;
+    --item: #FFFFFF;
+    --item-hover: #F2F3F5;
+    --item-active: #E7EDFF;
+    --chat: #FFFFFF;
+    --lead: #F2F3F5;
+    --bridge: #165DFF;
+    --text: #1D2129;
+    --muted: #86909C;
+    --code-bg: #1D2129;
+    --code-text: #F2F3F5;
+    --input: #FFFFFF;
+    --focus: #165DFF;
+    --line: #E5E6EB;
+    --tag-bg: #FFFFFF;
+    --scroll: #C9CDD4;
+    --scroll-hover: #A9AEB8;
+    height: 100%; padding: 0 12px 12px; background: var(--bg); color: var(--text);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  body[data-ds-dark-theme] .app {
+    --bg: #17171A;
+    --panel: #232324;
+    --item: #232324;
+    --item-hover: #2E2E30;
+    --item-active: #253557;
+    --chat: #1D1D1F;
+    --lead: #2E2E30;
+    --text: #F2F3F5;
+    --muted: #86909C;
+    --code-bg: #141414;
+    --code-text: #E5E6EB;
+    --input: #232324;
+    --line: #2E2E30;
+    --tag-bg: #232324;
+    --scroll: #4E4E52;
+    --scroll-hover: #63636A;
+  }
+
+  .topbar {
+    height: 56px; flex: 0 0 56px; display: flex; align-items: center; gap: 12px;
+    padding: 0 4px;
+  }
+  .brand { font-size: 16px; font-weight: 600; letter-spacing: .01em; }
+  .top-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #00B42A; }
+  .icon-btn {
+    width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+    transition: background-color .2s ease;
+  }
+  .icon-btn:hover { background: var(--item-hover); color: var(--text); }
+  .icon-btn svg { width: 16px; height: 16px; display: block; }
+
+  .main { flex: 1; min-height: 0; display: flex; gap: 8px; }
+  .sidebar {
+    width: 300px; flex: 0 0 300px; min-height: 0; display: flex; flex-direction: column;
+    background: var(--panel); border-radius: 12px; overflow: hidden;
+  }
+  .sidebar-head {
+    flex: 0 0 auto; display: flex; align-items: baseline; gap: 6px;
+    padding: 16px 16px 6px; color: var(--muted); font-size: 12px;
+  }
+  .sidebar-head strong { color: var(--text); font-size: 12px; font-weight: 600; }
+  .sidebar-head .count { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0 8px; }
+  .thread {
+    display: block; width: calc(100% - 16px); margin: 4px 8px; padding: 12px 14px;
+    border: 0; border-radius: 8px; background: var(--item); color: var(--text);
+    text-align: left; font: inherit; cursor: pointer; transition: background-color .2s ease;
+  }
+  .thread:hover { background: var(--item-hover); }
+  .thread[data-active="true"] { background: var(--item-active); }
+  .thread-row { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .thread-title { font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .thread-time { margin-left: auto; flex: 0 0 auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .thread-preview { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .chat {
+    flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+    background: var(--chat); border-radius: 12px; overflow: hidden;
+  }
+  .chat-head { flex: 0 0 auto; padding: 18px 24px 4px; }
+  .chat-title { font-size: 14px; font-weight: 600; line-height: 22px; }
+  .chat-sub { margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 18px; }
+  .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 24px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .date { align-self: center; margin: 2px 0 4px; padding: 2px 10px; border-radius: 999px; background: var(--lead); color: var(--muted); font-size: 12px; line-height: 18px; }
+
+  .card {
+    width: 100%; max-width: 860px; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .card[data-variant="lead"] { background: var(--lead); color: var(--text); --card-muted: var(--muted); --card-tag-bg: var(--tag-bg); --card-tag-text: var(--muted); --card-dot: var(--muted); }
+  .card[data-variant="bridge"] { background: var(--bridge); color: #FFFFFF; --card-muted: rgba(255,255,255,.72); --card-tag-bg: rgba(255,255,255,.16); --card-tag-text: #FFFFFF; --card-dot: rgba(255,255,255,.72); }
+  .card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .sender { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; line-height: 18px; }
+  .sender-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--card-dot); }
+  .tag { margin-left: auto; flex: 0 0 auto; padding: 1px 8px; border-radius: 999px; background: var(--card-tag-bg); color: var(--card-tag-text); font-size: 12px; line-height: 18px; }
+  .card-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .card-foot { display: flex; align-items: center; gap: 8px; color: var(--card-muted); font-size: 12px; line-height: 18px; }
+  .card-foot .thread-id { margin-left: auto; font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
+
+  .code { border-radius: 6px; background: var(--code-bg); overflow: hidden; }
+  .code-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; color: rgba(255,255,255,.5); font-size: 11px; line-height: 16px; }
+  .copy {
+    margin-left: auto; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 6px; background: transparent; color: rgba(255,255,255,.55); cursor: pointer;
+    transition: background-color .2s ease, color .2s ease;
+  }
+  .copy:hover { background: rgba(255,255,255,.08); color: #FFFFFF; }
+  .copy svg { width: 14px; height: 14px; display: block; }
+  .code pre { margin: 0; padding: 4px 12px 12px; overflow-x: auto; color: var(--code-text); font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.5; }
+  .code code { font: inherit; white-space: pre; }
+
+  .composer { flex: 0 0 auto; padding: 12px 20px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+  .input {
+    flex: 1; min-width: 0; height: 44px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid var(--focus); background: var(--input); color: var(--text);
+    font: inherit; font-size: 14px; outline: none;
+  }
+  .input::placeholder { color: var(--muted); }
+  .send {
+    width: 40px; height: 40px; flex: 0 0 40px; border: 0; border-radius: 10px; background: #165DFF; color: #FFFFFF;
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .send svg { width: 18px; height: 18px; display: block; }
+
+  .list::-webkit-scrollbar, .messages::-webkit-scrollbar, .code pre::-webkit-scrollbar { width: 5px; height: 5px; }
+  .list::-webkit-scrollbar-track, .messages::-webkit-scrollbar-track, .code pre::-webkit-scrollbar-track { background: transparent; }
+  .list::-webkit-scrollbar-thumb, .messages::-webkit-scrollbar-thumb, .code pre::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 999px; }
+  .list::-webkit-scrollbar-thumb:hover, .messages::-webkit-scrollbar-thumb:hover, .code pre::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
+</style>
+</head>
+<body>
+<script>
+  if (new URLSearchParams(location.search).get('theme') === 'dark') {
+    document.body.setAttribute('data-ds-dark-theme', '');
+  }
+</script>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">会话桥</div>
+    <div class="top-actions">
+      <span class="live"><span class="live-dot"></span>实时更新</span>
+      <button class="icon-btn" type="button" aria-label="刷新">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.75"/><path d="M13.2 2.8v3.2H10"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="sidebar-head"><strong>会话</strong><span class="count">12</span></div>
+      <nav class="list" aria-label="会话列表">
+        <button class="thread" type="button" data-active="true">
+          <span class="thread-row"><span class="thread-title">会话桥接回复与 PHP 演示</span><span class="thread-time">19:05</span></span>
+          <span class="thread-preview">PHP 演示代码已发出</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">PR #36 审查</span><span class="thread-time">18:42</span></span>
+          <span class="thread-preview">审核通过，P0=0 / P1=0</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">部署值班</span><span class="thread-time">18:10</span></span>
+          <span class="thread-preview">构建已通过，可以发布</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">设计稿走查</span><span class="thread-time">昨天</span></span>
+          <span class="thread-preview">交互稿已更新到 v3</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">接口联调</span><span class="thread-time">昨天</span></span>
+          <span class="thread-preview">Mock 已就绪，可以直接跑</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">文档校对</span><span class="thread-time">周一</span></span>
+          <span class="thread-preview">已提交 3 条修改建议</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">性能回归</span><span class="thread-time">周一</span></span>
+          <span class="thread-preview">首屏 1.2s，较上周下降 8%</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">组件库升级</span><span class="thread-time">上周</span></span>
+          <span class="thread-preview">计划升级到 2.4.0</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">发布清单</span><span class="thread-time">上周</span></span>
+          <span class="thread-preview">待确认回滚点</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">告警巡检</span><span class="thread-time">上周</span></span>
+          <span class="thread-preview">夜间告警已清零</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">数据迁移</span><span class="thread-time">上周</span></span>
+          <span class="thread-preview">迁移脚本已评审</span>
+        </button>
+        <button class="thread" type="button">
+          <span class="thread-row"><span class="thread-title">发布复盘</span><span class="thread-time">上周</span></span>
+          <span class="thread-preview">复盘文档待补充</span>
+        </button>
+      </nav>
+    </aside>
+
+    <section class="chat" aria-label="聊天面板">
+      <header class="chat-head">
+        <div class="chat-title">会话桥接回复与 PHP 演示</div>
+        <div class="chat-sub">Bridge · 3 个线程 · 6 条消息</div>
+      </header>
+
+      <div class="messages" aria-label="消息列表">
+        <div class="date">今天</div>
+
+        <article class="card" data-variant="lead">
+          <header class="card-head">
+            <span class="sender"><span class="sender-dot"></span>Lead</span>
+            <span class="tag">请求</span>
+          </header>
+          <div class="card-body">帮我写一个 PHP 的 Hello World 演示，带上运行说明。</div>
+          <footer class="card-foot"><span>19:02</span><span class="thread-id">#thr_5995bd4b</span></footer>
+        </article>
+
+        <article class="card" data-variant="bridge">
+          <header class="card-head">
+            <span class="sender"><span class="sender-dot"></span>Bridge</span>
+            <span class="tag">回复</span>
+          </header>
+          <div class="card-body">PHP Hello World：</div>
+          <div class="code">
+            <div class="code-head"><span>PHP</span>
+              <button class="copy" type="button" aria-label="复制代码">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+                  <rect x="5.5" y="5.5" width="7" height="7" rx="1.2"/><path d="M10.5 5.5V4.2A1.2 1.2 0 0 0 9.3 3H4.2A1.2 1.2 0 0 0 3 4.2v5.1a1.2 1.2 0 0 0 1.2 1.2h1.3"/>
+                </svg>
+              </button>
+            </div>
+            <pre><code>&lt;?php
+// hello.php
+echo "Hello, World!\n";</code></pre>
+          </div>
+          <div class="card-body">运行：php hello.php</div>
+          <footer class="card-foot"><span>19:03</span><span class="thread-id">#thr_5995bd4b</span></footer>
+        </article>
+
+        <article class="card" data-variant="lead">
+          <header class="card-head">
+            <span class="sender"><span class="sender-dot"></span>Lead</span>
+            <span class="tag">请求</span>
+          </header>
+          <div class="card-body">再补一个数组拼接的简单例子，代码尽量短。</div>
+          <footer class="card-foot"><span>19:04</span><span class="thread-id">#thr_698fede0</span></footer>
+        </article>
+
+        <article class="card" data-variant="bridge">
+          <header class="card-head">
+            <span class="sender"><span class="sender-dot"></span>Bridge</span>
+            <span class="tag">回复</span>
+          </header>
+          <div class="card-body">演示代码：</div>
+          <div class="code">
+            <div class="code-head"><span>PHP</span>
+              <button class="copy" type="button" aria-label="复制代码">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round">
+                  <rect x="5.5" y="5.5" width="7" height="7" rx="1.2"/><path d="M10.5 5.5V4.2A1.2 1.2 0 0 0 9.3 3H4.2A1.2 1.2 0 0 0 3 4.2v5.1a1.2 1.2 0 0 0 1.2 1.2h1.3"/>
+                </svg>
+              </button>
+            </div>
+            <pre><code>&lt;?php
+$items = ["苹果", "香蕉", "橙子"];
+echo implode("、", $items) . "\n";</code></pre>
+          </div>
+          <div class="card-body">执行 php demo.php 即可看到结果。</div>
+          <footer class="card-foot"><span>19:05</span><span class="thread-id">#thr_698fede0</span></footer>
+        </article>
+      </div>
+
+      <div class="composer">
+        <input class="input" type="text" placeholder="输入消息，Enter 发送…" aria-label="输入消息">
+        <button class="send" type="button" aria-label="发送">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9h11"/><path d="M9.5 4.5 14 9l-4.5 4.5"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+  document.querySelectorAll('.copy').forEach(button => {
+    button.addEventListener('click', () => {
+      const code = button.closest('.code')?.querySelector('code')
+      if (code) navigator.clipboard?.writeText(code.textContent)
+    })
+  })
+</script>
+</body>
+</html>

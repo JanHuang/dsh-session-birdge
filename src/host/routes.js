@@ -15,11 +15,16 @@
  * @module dsh-session-bridge/routes
  */
 
+import { newMessageId, newThreadId } from './ids.js'
+
 /** One-shot snapshot route used by the client bundle. */
 export const SNAPSHOT_PATH = '/api/session-bridge/snapshot'
 
 /** Live snapshot stream used by the client bundle. */
 export const EVENTS_PATH = '/api/session-bridge/events'
+
+/** Composer send route used by the client bundle. */
+export const SEND_PATH = '/api/session-bridge/send'
 
 /** Default and maximum messages returned in one snapshot. */
 const DEFAULT_LIMIT = 300
@@ -52,13 +57,20 @@ export function registerBridgeRoutes(ctx, deps) {
       requestBody: 'buffered',
       fetch: request => openEventStream(ctx, deps.store, request, streams),
     })
+    const disposeSend = ctx.connection.fetch.register({
+      path: SEND_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => handleSend(ctx, deps, request),
+    })
     return async () => {
+      await disposeSend()
       await disposeEvents()
       await disposeSnapshot()
       for (const close of [...streams]) close()
       streams.clear()
     }
-  }, 'session-bridge: read-only routes')
+  }, 'session-bridge: routes')
 }
 
 /**
@@ -78,6 +90,80 @@ async function handleSnapshot(ctx, store, request) {
   return Response.json({ ...buildSnapshot(messages, items, Date.now()), version: store.version }, {
     headers: { 'cache-control': 'no-store' },
   })
+}
+
+/**
+ * Queue one request from the panel's composer.
+ * @param {any} ctx
+ * @param {{ store: import('./store.js').BridgeStore, policy: import('./policy.js').BridgePolicy, config: object, worker: { kick: () => void } }} deps
+ * @param {Request} request
+ * @returns {Promise<Response>}
+ */
+async function handleSend(ctx, deps, request) {
+  if (request.method !== 'POST') return Response.json({ error: 'method not allowed' }, { status: 405 })
+  let body
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json({ error: 'body must be JSON' }, { status: 400 })
+  }
+  const fromSessionId = typeof body?.fromSessionId === 'string' ? body.fromSessionId : ''
+  const toSessionId = typeof body?.toSessionId === 'string' ? body.toSessionId : ''
+  const text = typeof body?.text === 'string' ? body.text.trim() : ''
+  if (fromSessionId === '' || toSessionId === '') return Response.json({ error: 'fromSessionId and toSessionId are required' }, { status: 400 })
+  if (fromSessionId === toSessionId) return Response.json({ error: 'a session cannot message itself' }, { status: 400 })
+  if (text === '') return Response.json({ error: 'text is required' }, { status: 400 })
+  if ([...text].length > deps.config.limits.maxContentChars) {
+    return Response.json({ error: `text exceeds ${deps.config.limits.maxContentChars} characters` }, { status: 400 })
+  }
+  if (!deps.config.security.allowDirectSessionTargets) {
+    return Response.json({ error: 'direct session targeting is disabled' }, { status: 403 })
+  }
+  const items = await listSessions(ctx, request.signal)
+  const from = items.find(item => String(item.sessionId) === fromSessionId)
+  const to = items.find(item => String(item.sessionId) === toSessionId)
+  if (from === undefined || to === undefined) return Response.json({ error: 'session is not visible' }, { status: 404 })
+  if (from.origin === 'subagent' || to.origin === 'subagent') {
+    return Response.json({ error: 'subagent sessions cannot use the bridge' }, { status: 400 })
+  }
+  const fromRole = deps.policy.resolveCaller(fromSessionId)?.role ?? 'direct'
+  const toRole = deps.policy.resolveCaller(toSessionId)?.role ?? 'direct'
+  const rate = deps.policy.checkRate(fromRole)
+  if (!rate.allowed) return Response.json({ error: rate.reason }, { status: 429 })
+  if (deps.store.pendingTargetCount(toSessionId, toRole) >= deps.config.limits.maxPendingPerSession) {
+    return Response.json({ error: 'the destination queue is full' }, { status: 429 })
+  }
+  const now = Date.now()
+  const threadId = newThreadId()
+  const { message } = deps.store.insertMessage({
+    id: newMessageId(),
+    threadId,
+    replyTo: undefined,
+    fromRole,
+    fromSessionId,
+    toRole,
+    toSessionId,
+    kind: 'request',
+    priority: 'normal',
+    content: text,
+    metadata: undefined,
+    idempotencyKey: undefined,
+    status: 'pending',
+    createdAt: now,
+    expiresAt: now + deps.config.limits.messageTtlMs,
+  })
+  deps.store.audit({
+    at: now,
+    action: 'send',
+    messageId: message.id,
+    actorRole: fromRole,
+    actorSession: fromSessionId,
+    toRole,
+    toSession: toSessionId,
+    detail: `kind=request thread=${threadId} source=view`,
+  })
+  deps.worker.kick()
+  return Response.json({ messageId: message.id, status: 'pending' }, { status: 201 })
 }
 
 /**
