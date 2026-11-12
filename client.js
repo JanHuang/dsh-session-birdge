@@ -95,8 +95,8 @@ window.__ModuleLoader__.load({
   --dsb-text:#1D2129; --dsb-muted:#86909C; --dsb-code-bg:#1D2129; --dsb-code-text:#F2F3F5;
   --dsb-input:#FFFFFF; --dsb-focus:#165DFF; --dsb-line:#E5E6EB; --dsb-tag-bg:#FFFFFF;
   --dsb-scroll:#C9CDD4; --dsb-scroll-hover:#A9AEB8;
-  height:100%; min-height:320px; padding:0 12px 12px; background:var(--dsb-bg); color:var(--dsb-text);
-  display:flex; flex-direction:column; min-height:0; box-sizing:border-box;
+  height:100%; flex:1 1 auto; min-height:0; padding:0 12px 12px; background:var(--dsb-bg); color:var(--dsb-text);
+  display:flex; flex-direction:column; overflow:hidden; isolation:isolate; box-sizing:border-box;
   font-family:Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 body[data-ds-dark-theme] .dsb-root {
@@ -120,7 +120,7 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-sidebar-head { flex:0 0 auto; display:flex; align-items:baseline; gap:6px; padding:16px 16px 6px; color:var(--dsb-muted); font-size:12px; }
 .dsb-sidebar-head strong { color:var(--dsb-text); font-size:12px; font-weight:600; }
 .dsb-sidebar-head .dsb-count { margin-left:auto; font-variant-numeric:tabular-nums; }
-.dsb-list { flex:1; min-height:0; overflow-y:auto; padding:2px 0 8px; }
+.dsb-list { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:2px 0 8px; }
 .dsb-thread { display:block; width:calc(100% - 16px); margin:4px 8px; padding:12px 14px; border:0; border-radius:8px; background:var(--dsb-item); color:var(--dsb-text); text-align:left; font:inherit; cursor:pointer; transition:background-color .2s ease; }
 .dsb-thread:hover { background:var(--dsb-item-hover); }
 .dsb-thread[data-active="true"] { background:var(--dsb-item-active); }
@@ -132,11 +132,12 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-chat-head { flex:0 0 auto; padding:18px 24px 4px; }
 .dsb-chat-title { font-size:14px; font-weight:600; line-height:22px; }
 .dsb-chat-sub { margin-top:2px; color:var(--dsb-muted); font-size:12px; line-height:18px; }
-.dsb-messages { flex:1; min-height:0; overflow-y:auto; padding:6px 24px 20px; display:flex; flex-direction:column; gap:12px; }
+.dsb-messages { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:6px 24px 20px; display:flex; flex-direction:column; gap:12px; }
 .dsb-date { align-self:center; margin:2px 0 4px; padding:2px 10px; border-radius:999px; background:var(--dsb-lead); color:var(--dsb-muted); font-size:12px; line-height:18px; }
 .dsb-history { position:sticky; top:0; z-index:2; align-self:center; display:inline-flex; align-items:center; gap:6px; margin:0 0 4px; padding:3px 12px; border:1px dashed var(--dsb-line); border-radius:999px; background:var(--dsb-chat); color:var(--dsb-muted); font-size:12px; line-height:18px; cursor:pointer; }
 .dsb-history:hover { color:var(--dsb-text); }
-.dsb-card { width:100%; max-width:860px; border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+.dsb-card { width:78%; max-width:860px; align-self:flex-start; border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+.dsb-card[data-side="right"] { align-self:flex-end; }
 .dsb-card[data-variant="lead"] { background:var(--dsb-lead); color:var(--dsb-text); --dsb-card-muted:var(--dsb-muted); --dsb-card-tag-bg:var(--dsb-tag-bg); --dsb-card-tag-text:var(--dsb-muted); --dsb-card-dot:var(--dsb-muted); }
 .dsb-card[data-variant="bridge"] { background:var(--dsb-bridge); color:#FFFFFF; --dsb-card-muted:rgba(255,255,255,.72); --dsb-card-tag-bg:rgba(255,255,255,.16); --dsb-card-tag-text:#FFFFFF; --dsb-card-dot:rgba(255,255,255,.72); }
 .dsb-card-head { display:flex; align-items:center; gap:8px; min-width:0; }
@@ -175,6 +176,7 @@ body[data-ds-dark-theme] .dsb-root {
   .dsb-chat-head { padding:14px 16px 4px; }
   .dsb-messages { padding:6px 16px 16px; }
   .dsb-composer { padding:10px 12px 14px; }
+  .dsb-card { width:92%; }
 }
 `
 
@@ -596,6 +598,7 @@ body[data-ds-dark-theme] .dsb-root {
             key: message.id,
             className: 'dsb-card',
             'data-variant': variant,
+            'data-side': variant === 'bridge' ? 'right' : 'left',
           },
             h('header', { className: 'dsb-card-head' },
               h('span', { className: 'dsb-sender' },

@@ -106,10 +106,10 @@
   .date { align-self: center; margin: 2px 0 4px; padding: 2px 10px; border-radius: 999px; background: var(--lead); color: var(--muted); font-size: 12px; line-height: 18px; }
 
   .card {
-    width: 100%; max-width: 860px; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    width: 78%; max-width: 860px; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
   }
-  .card[data-variant="lead"] { background: var(--lead); color: var(--text); --card-muted: var(--muted); --card-tag-bg: var(--tag-bg); --card-tag-text: var(--muted); --card-dot: var(--muted); }
-  .card[data-variant="bridge"] { background: var(--bridge); color: #FFFFFF; --card-muted: rgba(255,255,255,.72); --card-tag-bg: rgba(255,255,255,.16); --card-tag-text: #FFFFFF; --card-dot: rgba(255,255,255,.72); }
+  .card[data-variant="lead"] { align-self: flex-start; background: var(--lead); color: var(--text); --card-muted: var(--muted); --card-tag-bg: var(--tag-bg); --card-tag-text: var(--muted); --card-dot: var(--muted); }
+  .card[data-variant="bridge"] { align-self: flex-end; background: var(--bridge); color: #FFFFFF; --card-muted: rgba(255,255,255,.72); --card-tag-bg: rgba(255,255,255,.16); --card-tag-text: #FFFFFF; --card-dot: rgba(255,255,255,.72); }
   .card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .sender { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; line-height: 18px; }
   .sender-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--card-dot); }

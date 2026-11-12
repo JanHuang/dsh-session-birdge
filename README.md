@@ -88,10 +88,11 @@ light/dark theme. The layout is a fixed sidebar plus a chat panel:
 - The right messages area scrolls independently; the composer stays pinned at
   the bottom. One card is one session pair, so every thread and historical
   message between that pair lives in the same chat, not a new card per thread.
-- Messages are stream cards, not left/right bubbles: Lead request cards use the
-  neutral surface; Bridge reply cards always use `#165DFF` with white text.
-  Each card carries the sender, a request/reply tag, the message body, a `#thread`
-  id, a time, and any fenced PHP block as a dark code block with a copy action.
+- Messages are stream cards aligned by sender rather than WeChat-style bubbles:
+  Lead cards sit left on the neutral surface; Bridge cards sit right and always
+  use `#165DFF` with white text. Each card carries the sender, a request/reply
+  tag, the message body, a `#thread` id, a time, and any fenced PHP block as a
+  dark code block with a copy action.
 - Today's messages are visible by default; older history stays behind an
   **Earlier messages** control. A centered date divider separates days.
 - New messages arrive over an authenticated server-sent event stream and append
