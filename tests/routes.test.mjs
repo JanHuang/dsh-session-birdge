@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import test from 'node:test'
-import { buildSnapshot, registerBridgeRoutes } from '../src/host/routes.js'
+import { buildSnapshot, EVENTS_PATH, registerBridgeRoutes, SNAPSHOT_PATH } from '../src/host/routes.js'
 import { BridgeStore } from '../src/host/store.js'
 import { seedMessage, tempDirectory } from './helpers.mjs'
 
@@ -86,17 +86,13 @@ test('buildSnapshot keeps role-only participants for an unbound destination', ()
   ])
 })
 
-test('the snapshot route reads messages and session labels', async t => {
-  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
-  t.after(() => store.close())
-  seedMessage({ store, clock: { now: () => 1_000_000 } }, { id: 'msg_route', content: 'route body' })
-
-  let route
+function fakeRoutes(store) {
+  const routes = new Map()
   const ctx = {
     connection: {
       fetch: {
         register: registration => {
-          route = registration
+          routes.set(registration.path, registration)
           return async () => {}
         },
       },
@@ -109,13 +105,71 @@ test('the snapshot route reads messages and session labels', async t => {
     },
   }
   registerBridgeRoutes(ctx, { store })
-  assert.equal(route.path, '/api/session-bridge/snapshot')
+  return routes
+}
+
+test('the snapshot route reads messages and session labels', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  seedMessage({ store, clock: { now: () => 1_000_000 } }, { id: 'msg_route', content: 'route body' })
+  const routes = fakeRoutes(store)
+  const route = routes.get(SNAPSHOT_PATH)
   assert.deepEqual(route.methods, ['GET'])
 
   const response = await route.fetch(new Request('http://127.0.0.1:1/api/session-bridge/snapshot?limit=10'))
   assert.equal(response.status, 200)
   const body = await response.json()
   assert.equal(body.totalMessages, 1)
+  assert.equal(body.version, store.version)
   assert.equal(body.conversations[0].messages[0].id, 'msg_route')
   assert.equal(body.sessions['session-reviewer'].title, 'Reviewer')
+})
+
+test('the event route streams an initial snapshot and pushes new messages', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  const routes = fakeRoutes(store)
+  const route = routes.get(EVENTS_PATH)
+  assert.deepEqual(route.methods, ['GET'])
+
+  const abort = new AbortController()
+  const response = await route.fetch(new Request('http://127.0.0.1:1/api/session-bridge/events', {
+    signal: abort.signal,
+  }))
+  assert.match(response.headers.get('content-type'), /text\/event-stream/)
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const readFrame = async () => {
+    for (;;) {
+      const index = buffer.indexOf('\n\n')
+      if (index !== -1) {
+        const block = buffer.slice(0, index)
+        buffer = buffer.slice(index + 2)
+        const data = block.split('\n')
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trimStart())
+          .join('\n')
+        if (data !== '') return JSON.parse(data)
+        continue
+      }
+      const { done, value } = await reader.read()
+      if (done) throw new Error('event stream ended')
+      buffer += decoder.decode(value, { stream: true })
+    }
+  }
+
+  const initial = await readFrame()
+  assert.equal(initial.type, 'snapshot')
+  assert.equal(initial.totalMessages, 0)
+  assert.equal(initial.version, store.version)
+
+  seedMessage({ store, clock: { now: () => 1_000_000 } }, { id: 'msg_live' })
+  const update = await readFrame()
+  assert.equal(update.type, 'snapshot')
+  assert.equal(update.totalMessages, 1)
+  assert.equal(update.conversations[0].messages[0].id, 'msg_live')
+
+  abort.abort()
+  await reader.cancel().catch(() => {})
 })

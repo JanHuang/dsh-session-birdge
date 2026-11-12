@@ -26,6 +26,8 @@ export class BridgeStore {
   #db
   #closed = false
   #statements = new Map()
+  #version = 0
+  #listeners = new Set()
 
   /**
    * @param {string} databasePath - absolute database file path.
@@ -109,6 +111,36 @@ export class BridgeStore {
     this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   }
 
+  /** Monotonic change counter used by the live snapshot stream. */
+  get version() {
+    return this.#version
+  }
+
+  /**
+   * Observe committed message changes.
+   * @param {(version: number) => void} listener
+   * @returns {() => void} unsubscribe
+   */
+  subscribe(listener) {
+    this.#listeners.add(listener)
+    return () => {
+      this.#listeners.delete(listener)
+    }
+  }
+
+  /** Bump the change counter and notify stream subscribers. */
+  #changed() {
+    if (this.#closed) return
+    this.#version += 1
+    for (const listener of this.#listeners) {
+      try {
+        listener(this.#version)
+      } catch {
+        // One failed subscriber must not break the write path.
+      }
+    }
+  }
+
   /** @param {string} sql */
   #statement(sql) {
     let statement = this.#statements.get(sql)
@@ -167,6 +199,7 @@ export class BridgeStore {
     )
     const message = this.getMessage(input.id)
     if (message === null) throw new Error(`session-bridge: message ${input.id} vanished after insert`)
+    this.#changed()
     return { message, inserted: true }
   }
 
@@ -195,8 +228,9 @@ export class BridgeStore {
    */
   setTargetSession(id, sessionId) {
     this.#assertOpen()
-    this.#statement('UPDATE messages SET to_session_id = ? WHERE id = ? AND to_session_id IS NULL')
+    const result = this.#statement('UPDATE messages SET to_session_id = ? WHERE id = ? AND to_session_id IS NULL')
       .run(sessionId, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -265,10 +299,11 @@ export class BridgeStore {
    */
   deferPending(id, nextAttemptAt) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages SET next_attempt_at = ?
       WHERE id = ? AND status = 'pending'
     `).run(nextAttemptAt, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -278,10 +313,11 @@ export class BridgeStore {
    */
   release(id, nextAttemptAt) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages SET status = 'pending', next_attempt_at = ?
       WHERE id = ? AND status = 'delivering'
     `).run(nextAttemptAt, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -290,11 +326,12 @@ export class BridgeStore {
    */
   markDelivered(id, now) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages
       SET status = 'delivered', delivered_at = ?, next_attempt_at = NULL, last_error = NULL
       WHERE id = ?
     `).run(now, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -304,10 +341,11 @@ export class BridgeStore {
    */
   markRetry(id, nextAttemptAt, error) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages SET status = 'pending', next_attempt_at = ?, last_error = ?
       WHERE id = ?
     `).run(nextAttemptAt, error, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -316,10 +354,11 @@ export class BridgeStore {
    */
   markFailed(id, error) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages SET status = 'failed', next_attempt_at = NULL, last_error = ?
       WHERE id = ?
     `).run(error, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -328,10 +367,11 @@ export class BridgeStore {
    */
   markExpired(id, reason) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages SET status = 'expired', next_attempt_at = NULL, last_error = ?
       WHERE id = ?
     `).run(reason, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -350,6 +390,7 @@ export class BridgeStore {
       UPDATE messages SET status = 'expired', next_attempt_at = NULL, last_error = 'message expired before delivery'
       WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?
     `).run(now)
+    this.#changed()
     return due
   }
 
@@ -363,6 +404,7 @@ export class BridgeStore {
       UPDATE messages SET status = 'pending'
       WHERE status = 'delivering'
     `).run()
+    if (Number(result.changes) > 0) this.#changed()
     return Number(result.changes)
   }
 
@@ -452,6 +494,7 @@ export class BridgeStore {
       UPDATE messages SET status = 'acked', acked_at = ?, read_at = COALESCE(read_at, ?)
       WHERE id = ?
     `).run(now, now, id)
+    this.#changed()
   }
 
   /**
@@ -461,8 +504,9 @@ export class BridgeStore {
    */
   updateMetadata(id, metadata) {
     this.#assertOpen()
-    this.#statement('UPDATE messages SET metadata = ? WHERE id = ?')
+    const result = this.#statement('UPDATE messages SET metadata = ? WHERE id = ?')
       .run(JSON.stringify(metadata), id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**
@@ -476,6 +520,7 @@ export class BridgeStore {
       UPDATE messages SET status = 'pending', acked_at = NULL, read_at = NULL
       WHERE reply_to = ? AND status = 'acked'
     `).run(messageId)
+    if (Number(result.changes) > 0) this.#changed()
     return Number(result.changes)
   }
 
@@ -495,6 +540,7 @@ export class BridgeStore {
       `).run(now, id)
       changed += Number(result.changes)
     }
+    if (changed > 0) this.#changed()
     return changed
   }
 
@@ -504,11 +550,12 @@ export class BridgeStore {
    */
   markAcked(id, now) {
     this.#assertOpen()
-    this.#statement(`
+    const result = this.#statement(`
       UPDATE messages
       SET status = 'acked', acked_at = ?, read_at = COALESCE(read_at, ?)
       WHERE id = ? AND status IN ('delivered', 'read')
     `).run(now, now, id)
+    if (Number(result.changes) > 0) this.#changed()
   }
 
   /**

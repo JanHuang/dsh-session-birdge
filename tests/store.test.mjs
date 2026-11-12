@@ -171,3 +171,20 @@ test('recent messages return the newest window in chronological order', t => {
   assert.deepEqual(store.recentMessages(2).map(message => message.id), ['m3', 'm4'])
   assert.deepEqual(store.recentMessages(10).map(message => message.id), ['m0', 'm1', 'm2', 'm3', 'm4'])
 })
+
+
+test('committed message changes advance the store version', t => {
+  const store = freshStore(t)
+  const versions = []
+  const unsubscribe = store.subscribe(version => versions.push(version))
+  store.insertMessage(base())
+  store.claim('msg_1')
+  store.recordAttempt('msg_1')
+  store.markDelivered('msg_1', 1_000_100)
+  assert.equal(store.version, 2)
+  assert.deepEqual(versions, [1, 2])
+  unsubscribe()
+  store.markRead(['msg_1'], 1_000_200)
+  assert.equal(store.version, 3)
+  assert.deepEqual(versions, [1, 2])
+})

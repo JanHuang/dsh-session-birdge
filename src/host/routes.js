@@ -1,33 +1,64 @@
 /**
- * Read-only HTTP snapshot served to the Bridge conversation view.
+ * Read-only HTTP routes served to the Bridge conversation view.
  *
- * The route sits inside Connection's owner firewall, so only this profile's
- * authenticated browser can read it. It exposes routing metadata and message
- * bodies for display; the audit log, database path, and internal errors stay
- * on the Host.
+ * Both routes sit inside Connection's owner firewall, so only this profile's
+ * authenticated browser can read them. They expose routing metadata and message
+ * bodies for display; the audit log, database path, and internal errors stay on
+ * the Host.
+ *
+ * - `/snapshot` is a one-shot JSON read used for the first paint and manual
+ *   refresh.
+ * - `/events` is a server-sent event stream: one `snapshot` frame on connect,
+ *   then a fresh frame after every committed message change. The view appends
+ *   new messages without polling.
  *
  * @module dsh-session-bridge/routes
  */
 
-/** Route path used by the client bundle. */
+/** One-shot snapshot route used by the client bundle. */
 export const SNAPSHOT_PATH = '/api/session-bridge/snapshot'
+
+/** Live snapshot stream used by the client bundle. */
+export const EVENTS_PATH = '/api/session-bridge/events'
 
 /** Default and maximum messages returned in one snapshot. */
 const DEFAULT_LIMIT = 300
 const MAX_LIMIT = 500
 
+/** How long a change batch waits before one rebuilt snapshot is sent. */
+const CHANGE_DEBOUNCE_MS = 60
+
+/** Comment-frame interval that keeps idle streams from being reaped. */
+const KEEP_ALIVE_MS = 20_000
+
 /**
- * Register the snapshot route on an optional `connection` service.
+ * Register the snapshot and event routes on an optional `connection` service.
  * @param {any} ctx - context whose `connection` is available.
  * @param {{ store: import('./store.js').BridgeStore }} deps
  */
 export function registerBridgeRoutes(ctx, deps) {
-  ctx.effect(() => ctx.connection.fetch.register({
-    path: SNAPSHOT_PATH,
-    methods: ['GET'],
-    requestBody: 'buffered',
-    fetch: request => handleSnapshot(ctx, deps.store, request),
-  }), 'session-bridge: snapshot route')
+  /** @type {Set<() => void>} */
+  const streams = new Set()
+  ctx.effect(() => {
+    const disposeSnapshot = ctx.connection.fetch.register({
+      path: SNAPSHOT_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: request => handleSnapshot(ctx, deps.store, request),
+    })
+    const disposeEvents = ctx.connection.fetch.register({
+      path: EVENTS_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: request => openEventStream(ctx, deps.store, request, streams),
+    })
+    return async () => {
+      await disposeEvents()
+      await disposeSnapshot()
+      for (const close of [...streams]) close()
+      streams.clear()
+    }
+  }, 'session-bridge: read-only routes')
 }
 
 /**
@@ -43,16 +74,132 @@ async function handleSnapshot(ctx, store, request) {
     ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(requested)))
     : DEFAULT_LIMIT
   const messages = store.recentMessages(limit)
-  let items = []
-  try {
-    const value = await ctx.sessionController.list({}, request.signal)
-    items = Array.isArray(value?.items) ? value.items : []
-  } catch {
-    // Session labels are presentation metadata; the panel still renders ids.
-  }
-  return Response.json(buildSnapshot(messages, items, Date.now()), {
+  const items = await listSessions(ctx, request.signal)
+  return Response.json({ ...buildSnapshot(messages, items, Date.now()), version: store.version }, {
     headers: { 'cache-control': 'no-store' },
   })
+}
+
+/**
+ * Open one server-sent event stream. The first frame is the current snapshot;
+ * each committed message change schedules one coalesced replacement snapshot.
+ * @param {any} ctx
+ * @param {import('./store.js').BridgeStore} store
+ * @param {Request} request
+ * @param {Set<() => void>} streams
+ * @returns {Promise<Response>}
+ */
+function openEventStream(ctx, store, request, streams) {
+  const encoder = new TextEncoder()
+  /** @type {ReadableStreamDefaultController<Uint8Array> | undefined} */
+  let controller
+  let closed = false
+  let debounce = null
+  let flushing = false
+  let pending = false
+  /** @type {() => void} */
+  let unsubscribe = () => {}
+  let keepAlive = null
+
+  const close = () => {
+    if (closed) return
+    closed = true
+    unsubscribe()
+    if (debounce !== null) clearTimeout(debounce)
+    if (keepAlive !== null) clearInterval(keepAlive)
+    streams.delete(close)
+    try {
+      controller?.close()
+    } catch {
+      // The bridge may already have torn down the underlying socket.
+    }
+  }
+  /** @param {object} payload */
+  const send = payload => {
+    if (closed || controller === undefined) return
+    try {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+    } catch {
+      close()
+    }
+  }
+  const flush = async () => {
+    if (closed) return
+    if (flushing) {
+      pending = true
+      return
+    }
+    flushing = true
+    try {
+      const messages = store.recentMessages(MAX_LIMIT)
+      const items = await listSessions(ctx, request.signal)
+      if (closed) return
+      send({ type: 'snapshot', ...buildSnapshot(messages, items, Date.now()), version: store.version })
+    } catch (error) {
+      if (request.signal.aborted) {
+        close()
+        return
+      }
+      send({ type: 'error', message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      flushing = false
+      if (pending) {
+        pending = false
+        schedule()
+      }
+    }
+  }
+  const schedule = () => {
+    if (closed || debounce !== null) return
+    debounce = setTimeout(() => {
+      debounce = null
+      void flush()
+    }, CHANGE_DEBOUNCE_MS)
+  }
+
+  const stream = new ReadableStream({
+    start(streamController) {
+      controller = streamController
+      unsubscribe = store.subscribe(schedule)
+      streams.add(close)
+      request.signal.addEventListener('abort', close, { once: true })
+      keepAlive = setInterval(() => {
+        if (closed || controller === undefined) return
+        try {
+          controller.enqueue(encoder.encode(': keep-alive\n\n'))
+        } catch {
+          close()
+        }
+      }, KEEP_ALIVE_MS)
+      void flush()
+    },
+    cancel() {
+      close()
+    },
+  })
+  return Promise.resolve(new Response(stream, {
+    headers: {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      'connection': 'keep-alive',
+      'x-accel-buffering': 'no',
+    },
+  }))
+}
+
+/**
+ * Read the visible Session list for display labels; a failure keeps ids only.
+ * @param {any} ctx
+ * @param {AbortSignal} signal
+ * @returns {Promise<any[]>}
+ */
+async function listSessions(ctx, signal) {
+  try {
+    const value = await ctx.sessionController.list({}, signal)
+    return Array.isArray(value?.items) ? value.items : []
+  } catch {
+    return []
+  }
 }
 
 /**

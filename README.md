@@ -87,8 +87,12 @@ status, and a thread tag when a pair used several threads.
 
 Today's messages are visible by default; older history stays collapsed behind
 an **Earlier messages** control. Long messages are shortened to a preview with
-an **Expand** action. The panel refreshes every 5 seconds and has a manual
-**Refresh** button. It is read-only: send and reply from the tools.
+an **Expand** action. New messages arrive over an authenticated server-sent
+event stream and append automatically; there is no polling. A manual
+**Refresh** button performs a hard resync. The selected conversation uses a
+brand-tinted row with an inset accent, and sender bubbles use a brand tint while
+receiver bubbles use the neutral surface. The view is read-only: send and reply
+from the tools.
 
 The view reads `/api/session-bridge/snapshot` served by the Host inside the
 Web connection's owner firewall. Open a new chat and use the tools to change

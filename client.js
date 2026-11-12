@@ -16,7 +16,7 @@ window.__ModuleLoader__.load({
 
     const NS = 'session-bridge'
     const SNAPSHOT_URL = '/api/session-bridge/snapshot?limit=500'
-    const REFRESH_MS = 5_000
+    const EVENTS_URL = '/api/session-bridge/events'
     const MESSAGE_LIMIT = 320
 
     const zh = {
@@ -25,7 +25,8 @@ window.__ModuleLoader__.load({
       'subtitle': '所有通过 bridge 沟通的会话',
       'refresh': '刷新',
       'refreshing': '刷新中…',
-      'auto': '每 5 秒自动刷新',
+      'live': '实时更新',
+      'reconnecting': '重连中…',
       'loading': '正在读取桥接消息…',
       'error': '无法读取桥接消息',
       'retry': '重试',
@@ -62,7 +63,8 @@ window.__ModuleLoader__.load({
       'subtitle': 'Every session conversation carried by the bridge',
       'refresh': 'Refresh',
       'refreshing': 'Refreshing…',
-      'auto': 'Auto-refresh every 5s',
+      'live': 'Live',
+      'reconnecting': 'Reconnecting…',
       'loading': 'Reading bridge messages…',
       'error': 'Could not read bridge messages',
       'retry': 'Retry',
@@ -100,8 +102,9 @@ window.__ModuleLoader__.load({
 .dsb-title { font-size:15px; font-weight:600; letter-spacing:0.01em; }
 .dsb-sub { margin-top:2px; color:var(--dsw-alias-label-secondary); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .dsb-actions { margin-left:auto; display:flex; align-items:center; gap:10px; flex:0 0 auto; }
-.dsb-auto { color:var(--dsw-alias-label-secondary); font-size:11px; display:inline-flex; align-items:center; gap:5px; }
-.dsb-auto::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--dsw-alias-state-success-primary); }
+.dsb-live { color:var(--dsw-alias-label-secondary); font-size:11px; display:inline-flex; align-items:center; gap:5px; }
+.dsb-live::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--dsw-alias-state-success-primary); }
+.dsb-live-wait::before { background:var(--dsw-alias-state-warn-primary); }
 .dsb-btn { appearance:none; border:1px solid var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); border-radius:8px; padding:5px 10px; font-size:12px; cursor:pointer; }
 .dsb-btn:hover:not(:disabled) { background:var(--dsw-alias-bg-layer-2); }
 .dsb-btn:disabled { opacity:.6; cursor:default; }
@@ -113,7 +116,9 @@ window.__ModuleLoader__.load({
 .dsb-list { width:300px; flex:0 0 300px; min-height:0; overflow:auto; padding:6px; background:var(--dsw-alias-bg-layer-1); border-right:1px solid var(--dsw-alias-border-l1); }
 .dsb-thread { width:100%; display:flex; align-items:flex-start; gap:10px; text-align:left; padding:10px; border:1px solid transparent; border-radius:10px; background:transparent; color:inherit; cursor:pointer; font:inherit; }
 .dsb-thread:hover { background:var(--dsw-alias-bg-layer-2); }
-.dsb-thread[data-active="true"] { background:var(--dsw-alias-bg-base); border-color:var(--dsw-alias-border-l2); }
+.dsb-thread[data-active="true"] { background:color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, var(--dsw-alias-bg-layer-1)); border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 42%, var(--dsw-alias-border-l1)); box-shadow:inset 3px 0 0 var(--dsw-alias-brand-primary); }
+.dsb-thread[data-active="true"] .dsb-name { color:var(--dsw-alias-brand-primary); }
+.dsb-thread[data-active="true"] .dsb-avatar { background:var(--dsw-alias-brand-primary); border-color:var(--dsw-alias-brand-primary); color:var(--dsw-alias-bg-base); }
 .dsb-avatar { width:28px; height:28px; flex:0 0 28px; display:flex; align-items:center; justify-content:center; border-radius:50%; font-size:12px; font-weight:600; color:var(--dsw-alias-brand-primary); background:color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, var(--dsw-alias-bg-layer-2)); border:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, var(--dsw-alias-border-l1)); }
 .dsb-avatar-lg { width:34px; height:34px; flex-basis:34px; font-size:14px; }
 .dsb-thread-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
@@ -136,8 +141,9 @@ window.__ModuleLoader__.load({
 .dsb-msg[data-side="right"] { align-self:flex-end; align-items:flex-end; }
 .dsb-meta { display:flex; align-items:center; gap:6px; color:var(--dsw-alias-label-secondary); font-size:11px; }
 .dsb-who { color:var(--dsw-alias-label-primary); font-weight:600; }
-.dsb-bubble { border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); border-radius:12px; padding:9px 12px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
-.dsb-msg[data-side="right"] .dsb-bubble { background:color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, var(--dsw-alias-bg-layer-1)); border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, var(--dsw-alias-border-l1)); }
+.dsb-bubble { border:1px solid var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-2); border-radius:12px 12px 12px 4px; padding:9px 12px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
+.dsb-msg[data-side="right"] .dsb-bubble { background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, var(--dsw-alias-bg-layer-1)); border-color:color-mix(in srgb, var(--dsw-alias-brand-primary) 48%, var(--dsw-alias-border-l1)); border-radius:12px 12px 4px 12px; }
+.dsb-msg[data-side="right"] .dsb-who { color:var(--dsw-alias-brand-primary); }
 .dsb-link { appearance:none; border:0; background:none; padding:0 4px; color:var(--dsw-alias-brand-primary); font:inherit; font-size:11px; cursor:pointer; }
 .dsb-msg-foot { display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:var(--dsw-alias-label-secondary); font-size:10px; }
 .dsb-chip { padding:0 6px; line-height:16px; border-radius:999px; border:1px solid var(--dsw-alias-border-l1); }
@@ -152,7 +158,7 @@ window.__ModuleLoader__.load({
   .dsb-body { flex-direction:column; }
   .dsb-list { width:auto; flex:0 0 auto; max-height:38%; border-right:0; border-bottom:1px solid var(--dsw-alias-border-l1); }
   .dsb-msg { max-width:92%; }
-  .dsb-auto { display:none; }
+  .dsb-live { display:none; }
 }
 `
 
@@ -191,6 +197,38 @@ window.__ModuleLoader__.load({
       return characters.length === 0 ? fallback : characters[0].toUpperCase()
     }
 
+    /**
+     * Read server-sent event frames from one streaming response.
+     * @param {ReadableStream<Uint8Array>} body
+     * @param {(data: string) => void} onData
+     * @param {AbortSignal} signal
+     */
+    async function readEventStream(body, onData, signal) {
+      const reader = body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) return
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+          let index
+          while ((index = buffer.indexOf('\n\n')) !== -1) {
+            const block = buffer.slice(0, index)
+            buffer = buffer.slice(index + 2)
+            const data = block.split('\n')
+              .filter(line => line.startsWith('data:'))
+              .map(line => line.slice(5).trimStart())
+              .join('\n')
+            if (data !== '') onData(data)
+          }
+          if (signal.aborted) return
+        }
+      } finally {
+        reader.releaseLock()
+      }
+    }
+
     /** The tab component. */
     function BridgeView(props) {
       const translate = useCallback((key, fallback) => {
@@ -208,10 +246,12 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState(null)
       const [loading, setLoading] = useState(true)
       const [refreshing, setRefreshing] = useState(false)
+      const [connection, setConnection] = useState('connecting')
       const [selectedId, setSelectedId] = useState(null)
       const [expandedHistory, setExpandedHistory] = useState(false)
       const [expandedMessages, setExpandedMessages] = useState(() => new Set())
       const mounted = useRef(true)
+      const hasData = useRef(false)
       const messagesRef = useRef(null)
 
       const load = useCallback(async () => {
@@ -224,6 +264,7 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
           const data = await response.json()
           if (!mounted.current) return
+          hasData.current = true
           setSnapshot(data)
           setError(null)
         } catch (failure) {
@@ -240,10 +281,62 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         mounted.current = true
         void load()
-        const timer = setInterval(() => { void load() }, REFRESH_MS)
+        let disposed = false
+        let controller = null
+        let retryTimer = null
+        let attempt = 0
+
+        const connect = async () => {
+          if (disposed) return
+          controller = new AbortController()
+          setConnection(attempt === 0 ? 'connecting' : 'reconnecting')
+          try {
+            const response = await fetch(EVENTS_URL, {
+              headers: { accept: 'text/event-stream' },
+              cache: 'no-store',
+              signal: controller.signal,
+            })
+            if (!response.ok || response.body === null) throw new Error(`HTTP ${response.status}`)
+            attempt = 0
+            setConnection('live')
+            await readEventStream(response.body, data => {
+              let frame
+              try {
+                frame = JSON.parse(data)
+              } catch {
+                return
+              }
+              if (frame.type === 'snapshot') {
+                hasData.current = true
+                setSnapshot(frame)
+                setError(null)
+                setLoading(false)
+              } else if (frame.type === 'error') {
+                setError(typeof frame.message === 'string' ? frame.message : 'event stream error')
+              }
+            }, controller.signal)
+            if (!disposed) throw new Error('event stream closed')
+          } catch (failure) {
+            if (disposed) return
+            setConnection('reconnecting')
+            if (!hasData.current) {
+              setError(failure instanceof Error ? failure.message : String(failure))
+            }
+            const delay = Math.min(15_000, 800 * 2 ** Math.min(attempt, 4))
+            attempt += 1
+            retryTimer = setTimeout(() => {
+              retryTimer = null
+              void connect()
+            }, delay)
+          }
+        }
+
+        void connect()
         return () => {
+          disposed = true
           mounted.current = false
-          clearInterval(timer)
+          controller?.abort()
+          if (retryTimer !== null) clearTimeout(retryTimer)
         }
       }, [load])
 
@@ -333,7 +426,8 @@ window.__ModuleLoader__.load({
           ),
         ),
         h('div', { className: 'dsb-actions' },
-          h('span', { className: 'dsb-auto' }, translate('auto', 'Auto-refresh every 5s')),
+          h('span', { className: `dsb-live${connection === 'live' ? '' : ' dsb-live-wait'}` },
+            connection === 'live' ? translate('live', 'Live') : translate('reconnecting', 'Reconnecting…')),
           h('button', {
             type: 'button',
             className: 'dsb-btn',
