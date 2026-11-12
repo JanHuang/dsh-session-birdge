@@ -147,7 +147,14 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-thread-row { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .dsb-thread-title { font-size:14px; font-weight:500; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .dsb-thread-time { margin-left:auto; flex:0 0 auto; color:var(--dsb-muted); font-size:12px; font-variant-numeric:tabular-nums; }
-.dsb-thread-preview { margin-top:4px; color:var(--dsb-muted); font-size:12px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dsb-thread-preview { position:relative; display:block; margin-top:4px; color:var(--dsb-muted); font-size:12px; line-height:18px; white-space:nowrap; overflow:hidden; }
+.dsb-preview-text { display:block; overflow:hidden; text-overflow:ellipsis; }
+.dsb-measure { position:absolute; left:0; top:0; visibility:hidden; white-space:nowrap; pointer-events:none; }
+.dsb-marquee { display:block; overflow:hidden; }
+.dsb-marquee-track { display:inline-flex; gap:32px; white-space:nowrap; animation:dsb-marquee var(--dsb-marquee-duration, 12s) linear infinite; }
+.dsb-thread:hover .dsb-marquee-track { animation-play-state:paused; }
+@keyframes dsb-marquee { from { transform:translateX(0); } to { transform:translateX(calc(-1 * var(--dsb-marquee-distance, 0px))); } }
+@media (prefers-reduced-motion: reduce) { .dsb-marquee-track { animation:none; } }
 .dsb-chat { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; background:var(--dsb-chat); border-radius:12px; overflow:hidden; }
 .dsb-chat-head { flex:0 0 auto; padding:18px 24px 4px; }
 .dsb-chat-title { font-size:14px; font-weight:600; line-height:22px; }
@@ -280,6 +287,49 @@ body[data-ds-dark-theme] .dsb-root {
         node = node.parentElement
       }
       return null
+    }
+
+    /** Preview line that scrolls as a marquee only when its text overflows. */
+    function MarqueePreview({ text }) {
+      const containerRef = useRef(null)
+      const measureRef = useRef(null)
+      const [overflow, setOverflow] = useState(false)
+      const [textWidth, setTextWidth] = useState(0)
+
+      useEffect(() => {
+        const container = containerRef.current
+        const measure = measureRef.current
+        if (container === null || measure === null) return
+        const update = () => {
+          const width = measure.getBoundingClientRect().width
+          setTextWidth(width)
+          setOverflow(width > container.clientWidth + 1)
+        }
+        update()
+        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+        observer?.observe(container)
+        document.fonts?.ready.then(update).catch(() => {})
+        return () => observer?.disconnect()
+      }, [text])
+
+      const distance = Math.max(0, Math.ceil(textWidth + 32))
+      const duration = Math.max(6, Math.min(24, distance / 30))
+      return h('span', { className: 'dsb-thread-preview', ref: containerRef, title: text },
+        h('span', { className: 'dsb-measure', ref: measureRef, 'aria-hidden': 'true' }, text),
+        overflow
+          ? h('span', { className: 'dsb-marquee' },
+            h('span', {
+              className: 'dsb-marquee-track',
+              style: {
+                '--dsb-marquee-distance': `${distance}px`,
+                '--dsb-marquee-duration': `${duration}s`,
+              },
+            },
+              h('span', { className: 'dsb-marquee-text' }, text),
+              h('span', { className: 'dsb-marquee-text', 'aria-hidden': 'true' }, text),
+            ))
+          : h('span', { className: 'dsb-preview-text' }, text),
+      )
     }
 
     /** The tab component. */
@@ -754,8 +804,9 @@ body[data-ds-dark-theme] .dsb-root {
                 h('span', { className: 'dsb-thread-title' }, conversationLabel(conversation)),
                 h('span', { className: 'dsb-thread-time' }, formatClock(conversation.updatedAt)),
               ),
-              h('span', { className: 'dsb-thread-preview' },
-                last === undefined ? '' : `${displayRole(last.fromRole)}: ${summarize(last.content, 80)}`),
+              h(MarqueePreview, {
+                text: last === undefined ? '' : `${displayRole(last.fromRole)}: ${summarize(last.content, 80)}`,
+              }),
             )
           }),
         ),
