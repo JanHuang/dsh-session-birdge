@@ -1,3 +1,5 @@
+English | [中文](README.zh.md)
+
 # Session bridge
 
 Asynchronous, durable messaging between independent DeepSeek Harness sessions.
@@ -111,6 +113,9 @@ light/dark theme. The layout is a fixed sidebar plus a chat panel:
 
 Design previews: [light](design/session-bridge-light.png) ·
 [dark](design/session-bridge-dark.png) · [HTML source](design/session-bridge-chat.html).
+Both PNGs are 2880×1800 (1440×900 at 2x) renders of the standalone design HTML,
+not screenshots of a running DSH page. The Chinese guide with the same
+screenshots is [README.zh.md](README.zh.md).
 
 ## Tools
 

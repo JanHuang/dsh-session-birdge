@@ -26,7 +26,8 @@
     "README.md",
     "SPEC.md",
     "tsconfig.json",
-    "design"
+    "design",
+    "README.zh.md"
   ],
   "dsh": {
     "bundle": {
