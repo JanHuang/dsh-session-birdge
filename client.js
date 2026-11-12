@@ -21,8 +21,8 @@ window.__ModuleLoader__.load({
     const HISTORY_URL = '/api/session-bridge/history'
 
     const zh = {
-      'view.bridge': '会话桥',
-      'title': '会话桥',
+      'view.bridge': '会话聊天',
+      'title': '会话聊天',
       'live': '实时更新',
       'reconnecting': '重连中…',
       'refresh': '刷新',
@@ -35,6 +35,14 @@ window.__ModuleLoader__.load({
       'list.title': '会话',
       'count.threads': '个线程',
       'count.messages': '条消息',
+      'count.members': '个成员',
+      'group.badge': '群组',
+      'group.new': '新群组',
+      'group.unnamed': '群组',
+      'group.empty': '这个群组还没有消息',
+      'group.emptyHint': '发送第一条消息给所有成员。',
+      'send.groupPlaceholder': '发送消息到群组…',
+      'send.groupBlocked': '当前会话不在这个群组中',
       'role.direct': 'Bridge',
       'role.lead': 'Lead',
       'kind.request': '请求',
@@ -58,8 +66,8 @@ window.__ModuleLoader__.load({
       'open.failed': '无法打开该文件或链接',
     }
     const en = {
-      'view.bridge': 'Bridge',
-      'title': 'Session bridge',
+      'view.bridge': 'Session Chat',
+      'title': 'Session Chat',
       'live': 'Live',
       'reconnecting': 'Reconnecting…',
       'refresh': 'Refresh',
@@ -72,6 +80,14 @@ window.__ModuleLoader__.load({
       'list.title': 'Conversations',
       'count.threads': 'threads',
       'count.messages': 'messages',
+      'count.members': 'members',
+      'group.badge': 'Group',
+      'group.new': 'New group',
+      'group.unnamed': 'Group',
+      'group.empty': 'This group has no messages yet',
+      'group.emptyHint': 'Send the first message to every member.',
+      'send.groupPlaceholder': 'Message the group…',
+      'send.groupBlocked': 'Current session is not a member of this group',
       'role.direct': 'Bridge',
       'role.lead': 'Lead',
       'kind.request': 'request',
@@ -148,6 +164,7 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-thread[data-active="true"] { background:var(--dsb-item-active); }
 .dsb-thread-row { display:flex; align-items:baseline; gap:8px; min-width:0; }
 .dsb-thread-title { font-size:14px; font-weight:500; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dsb-group-badge { display:inline-block; margin-right:6px; padding:1px 5px; border-radius:4px; background:var(--dsb-item-active); color:var(--dsb-focus); font-size:10px; font-weight:600; vertical-align:1px; }
 .dsb-thread-time { margin-left:auto; flex:0 0 auto; color:var(--dsb-muted); font-size:12px; font-variant-numeric:tabular-nums; }
 .dsb-thread-preview { position:relative; display:block; margin-top:4px; color:var(--dsb-muted); font-size:12px; line-height:18px; white-space:nowrap; overflow:hidden; }
 .dsb-preview-text { display:block; overflow:hidden; text-overflow:ellipsis; }
@@ -630,7 +647,11 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         fitLayoutRef.current()
       }, [loading, snapshot, selectedId])
 
-      const conversations = Array.isArray(snapshot?.conversations) ? snapshot.conversations : []
+      const conversations = (Array.isArray(snapshot?.conversations) ? snapshot.conversations : [])
+        .filter(conversation => conversation.kind !== 'group'
+          || currentSessionId === null
+          || (Array.isArray(conversation.members)
+            && conversation.members.some(member => member.sessionId === currentSessionId)))
       const sessions = snapshot?.sessions ?? {}
       const totalMessages = typeof snapshot?.totalMessages === 'number' ? snapshot.totalMessages : 0
       const ordered = [...conversations].sort((left, right) => {
@@ -655,14 +676,18 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
           ? translate('role.direct', 'Bridge')
           : String(role)
       const peerOf = conversation => {
-        if (currentSessionId === null) return null
+        if (conversation.kind === 'group' || currentSessionId === null) return null
         return conversation.participants.find(participant => participant.sessionId !== currentSessionId) ?? null
       }
       const conversationLabel = conversation => {
+        if (conversation.kind === 'group') return conversation.title ?? conversation.name ?? translate('group.unnamed', 'Group')
         const peer = peerOf(conversation)
         if (peer !== null) return nameOf(peer.sessionId) ?? displayRole(peer.role)
         return conversation.participants.map(participant => nameOf(participant.sessionId) ?? displayRole(participant.role)).join(' ⇄ ')
       }
+      const senderLabel = message => active !== undefined && active.kind === 'group'
+        ? nameOf(message.fromSessionId) ?? displayRole(message.fromRole)
+        : displayRole(message.fromRole)
       const kindLabel = kind => translate(`kind.${kind}`, String(kind))
 
       const todayStart = new Date()
@@ -684,14 +709,18 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
       const historySessions = active === undefined
         ? []
         : active.participants.map(participant => participant.sessionId).filter(sessionId => typeof sessionId === 'string' && sessionId !== '')
-      const canPageHistory = active !== undefined && historySessions.length === 2
+      const isGroup = active !== undefined && active.kind === 'group'
+      const groupMember = isGroup && currentSessionId !== null
+        && Array.isArray(active.members)
+        && active.members.some(member => member.sessionId === currentSessionId)
+      const canPageHistory = active !== undefined && (isGroup || historySessions.length === 2)
       const hasMoreHistory = canPageHistory && (activeHistory?.hasMore ?? true)
       const peer = active === undefined ? null : peerOf(active)
       const canSend = active !== undefined
-        && peer !== null
-        && typeof peer.sessionId === 'string'
-        && peer.sessionId !== ''
         && currentSessionId !== null
+        && (isGroup
+          ? groupMember
+          : peer !== null && typeof peer.sessionId === 'string' && peer.sessionId !== '')
 
       useEffect(() => {
         const node = messagesRef.current
@@ -730,11 +759,13 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         if (!entry.hasMore) return
         loadingConversations.current.add(activeId)
         const oldest = visibleMessages[0]
-        const params = new URLSearchParams({
-          a: historySessions[0],
-          b: historySessions[1],
-          limit: '20',
-        })
+        const params = new URLSearchParams({ limit: '20' })
+        if (active.kind === 'group') {
+          params.set('group', active.groupId)
+        } else {
+          params.set('a', historySessions[0])
+          params.set('b', historySessions[1])
+        }
         if (oldest !== undefined) {
           params.set('before', String(oldest.createdAt))
           params.set('beforeId', oldest.id)
@@ -825,7 +856,9 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
           const response = await fetch(SEND_URL, {
             method: 'POST',
             headers: { 'content-type': 'application/json', accept: 'application/json' },
-            body: JSON.stringify({ fromSessionId: currentSessionId, toSessionId: peer.sessionId, text }),
+            body: JSON.stringify(isGroup
+              ? { fromSessionId: currentSessionId, groupId: active.groupId, text }
+              : { fromSessionId: currentSessionId, toSessionId: peer.sessionId, text }),
           })
           const data = await response.json().catch(() => ({}))
           if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`)
@@ -838,7 +871,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
       }
 
       const header = h('div', { className: 'dsb-topbar' },
-        h('div', { className: 'dsb-brand' }, translate('title', 'Session bridge')),
+        h('div', { className: 'dsb-brand' }, translate('title', 'Session Chat')),
         h('div', { className: 'dsb-top-actions' },
           h('span', { className: 'dsb-live' },
             h('span', { className: 'dsb-live-dot' }),
@@ -909,11 +942,19 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
               onClick: () => selectConversation(conversation.id),
             },
               h('span', { className: 'dsb-thread-row' },
-                h('span', { className: 'dsb-thread-title' }, conversationLabel(conversation)),
+                h('span', { className: 'dsb-thread-title' },
+                  conversation.kind === 'group'
+                    ? h('span', { className: 'dsb-group-badge' }, translate('group.badge', 'Group'))
+                    : null,
+                  conversationLabel(conversation)),
                 h('span', { className: 'dsb-thread-time' }, formatClock(conversation.updatedAt)),
               ),
               h(MarqueePreview, {
-                text: last === undefined ? '' : `${displayRole(last.fromRole)}: ${summarize(last.content, 80)}`,
+                text: last === undefined
+                  ? conversation.kind === 'group'
+                    ? translate('group.new', 'New group')
+                    : ''
+                  : `${conversation.kind === 'group' ? (nameOf(last.fromSessionId) ?? displayRole(last.fromRole)) : displayRole(last.fromRole)}: ${summarize(last.content, 80)}`,
               }),
             )
           }),
@@ -923,8 +964,11 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
       let chat = center(translate('empty.title', 'No bridge messages yet'), null)
       if (active !== undefined) {
         const chatLabel = conversationLabel(active)
+        const memberCount = Array.isArray(active.members) ? active.members.length : 0
         const chatSubtitle = [
-          peer === null ? null : displayRole(peer.role),
+          isGroup
+            ? `${memberCount} ${translate('count.members', 'members')}`
+            : peer === null ? null : displayRole(peer.role),
           `${active.threadIds.length} ${translate('count.threads', 'threads')}`,
           `${active.messages.length} ${translate('count.messages', 'messages')}`,
         ].filter(part => part !== null).join(' · ')
@@ -1003,7 +1047,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             h('header', { className: 'dsb-card-head' },
               h('span', { className: 'dsb-sender' },
                 h('span', { className: 'dsb-sender-dot' }),
-                displayRole(message.fromRole),
+                senderLabel(message),
               ),
               h('span', { className: 'dsb-tag' }, kindLabel(message.kind)),
             ),
@@ -1016,13 +1060,22 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         }
 
         const placeholder = !canSend
-          ? peer === null
-            ? translate('send.blocked', 'Current session is not in this conversation')
-            : translate('send.unbound', 'The peer session is not bound yet')
-          : translate('send.placeholder', 'Type a message, Enter to send…')
+          ? isGroup
+            ? translate('send.groupBlocked', 'Current session is not a member of this group')
+            : peer === null
+              ? translate('send.blocked', 'Current session is not in this conversation')
+              : translate('send.unbound', 'The peer session is not bound yet')
+          : isGroup
+            ? translate('send.groupPlaceholder', 'Message the group…')
+            : translate('send.placeholder', 'Type a message, Enter to send…')
 
         chat = h('section', { className: 'dsb-chat' },
-          h('header', { className: 'dsb-chat-head' },
+          h('header', {
+            className: 'dsb-chat-head',
+            title: isGroup
+              ? active.members.map(member => `${nameOf(member.sessionId) ?? member.sessionId} (${displayRole(member.role)})`).join(', ')
+              : undefined,
+          },
             h('div', { className: 'dsb-chat-title' }, chatLabel),
             h('div', { className: 'dsb-chat-sub' }, chatSubtitle),
           ),
@@ -1030,8 +1083,13 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             historyBar,
             visibleMessages.length === 0
               ? h('div', { className: 'dsb-center' },
-                h('div', { className: 'dsb-center-title' }, translate('history.emptyToday', 'No messages today yet')),
-                h('div', null, translate('history.hint', 'Expand earlier messages to read the history.')),
+                h('div', { className: 'dsb-center-title' },
+                  isGroup
+                    ? translate('group.empty', 'This group has no messages yet')
+                    : translate('history.emptyToday', 'No messages today yet')),
+                h('div', null, isGroup
+                  ? translate('group.emptyHint', 'Send the first message to every member.')
+                  : translate('history.hint', 'Expand earlier messages to read the history.')),
               )
               : rendered,
           ),

@@ -1,22 +1,22 @@
-# 会话桥（dsh-session-bridge）
+# 会话聊天（Session Chat）
 
 [English](README.md) | 中文
 
 让不同的独立 DSH 会话之间可以异步互发消息：可以按角色路由，也可以直接用 `@` 引用里的 session id 投递；消息落本地 SQLite，重启不丢；目标忙时排队、离线时等待、恢复后继续投递。
 
-插件还提供一个「会话桥」聊天面板，位于会话视图行「轨迹」之后，跟随宿主浅色/深色主题，用来集中查看所有通过 bridge 沟通的会话。
+插件还提供一个「会话聊天」聊天面板，位于会话视图行「轨迹」之后，跟随宿主浅色/深色主题，用来集中查看所有通过 bridge 沟通的会话。
 
 ## 界面预览
 
 ### 浅色主题
 
-![会话桥浅色主题：左侧会话列表 + 右侧聊天面板](design/session-bridge-light.png)
+![会话聊天浅色主题：左侧会话列表 + 右侧聊天面板](design/session-bridge-light.png)
 
 ### 深色主题
 
-![会话桥深色主题：同一布局与颜色的深色版本](design/session-bridge-dark.png)
+![会话聊天深色主题：同一布局与颜色的深色版本](design/session-bridge-dark.png)
 
-> 截图由同一份独立 HTML 设计稿（[design/session-bridge-chat.html](design/session-bridge-chat.html)）用无头 Chrome 渲染，尺寸 2880×1800（CSS 1440×900 @2x），用于展示布局和配色；实际面板会跟随宿主主题，内容为示例数据。详见下方「截图信息」。
+> 截图由同一份独立 HTML 设计稿（[design/session-bridge-chat.html](design/session-bridge-chat.html)）用无头 Chrome 渲染，尺寸 2880×1800（CSS 1440×900 @2x），用于展示布局和配色；实际面板会跟随宿主主题，内容为示例数据。群组沿用同一套布局，截图暂以单聊为例；详见下方「截图信息」。
 
 ## 安装
 
@@ -25,6 +25,8 @@
 3. 插件行 `session-bridge` 启用后生效；需要 Full access。
 
 首次启用会在 `~/.dsh/session-bridge/<profile>/bridge.db` 创建数据库（仅本人可读写）。
+
+> 项目显示名是 **Session Chat / 会话聊天**；本地开发包名仍为 `dsh-session-bridge`，发布到 npm 时计划使用 `@janhuang/dsh-session-chat`（避免与现有 `dsh-session-chat` 冲突）。
 
 ## 快速开始
 
@@ -53,7 +55,28 @@ session_send  { "toSessionId": "session-2cb151f8-...",
                 "text": "请跑一下导出并回报结果" }
 ```
 
-### 3. 读取与回复
+### 3. 会话群组
+
+把多个固定 session id 放进一个群组，然后一次群发：
+
+```text
+session_group_create { "name": "frontend",
+                       "description": "前端协作群",
+                       "members": ["session-a11933ef-...", "session-2cb151f8-..."] }
+
+session_send { "toGroup": "frontend", "text": "请各位同步进度" }
+```
+
+群组发送会为每个其他成员各生成一条独立投递；某个成员失败不影响其他人。
+
+成员用 `session_reply` 回复群消息时，**回复会广播给除自己以外的所有群成员**，形成群聊。
+
+- 群成员是**固定 session id**，不随角色绑定变化
+- 创建者始终在群里，且不能被移除；创建者或 lead 可以加人/移除别人
+- 成员可以自己退出群组
+- 当前会话不在群组时，群组不会出现在面板里，也不能群发
+
+### 4. 读取与回复
 
 目标会话收到后，用 `session_inbox` 查看，用 `session_reply` 回复：
 
@@ -62,7 +85,7 @@ session_inbox  { "limit": 20, "markRead": true }
 session_reply  { "messageId": "msg_...", "text": "已完成" }
 ```
 
-### 4. 同一回合内等待回复
+### 5. 同一回合内等待回复
 
 希望当前回合内拿到对方回复时，用 `session_ask`：
 
@@ -77,15 +100,17 @@ session_ask { "toSessionId": "session-2cb151f8-...", "text": "Ping" }
 
 ## 使用聊天面板
 
-打开会话视图行「轨迹」后面的 **会话桥**：
+打开会话视图行「轨迹」后面的 **会话聊天**：
 
 ### 左侧会话列表
 
 - 同一对会话的所有线程合并成**一个会话项**，不按 thread 拆成多个
+- 群组显示为带「群组」标签的会话项，标题是群名，副标题显示成员数；只有当前会话是成员时才显示
 - 列表超高时**独立滚动**，不跟随聊天内容；顶部「会话」标题固定
 - 默认 / hover / 选中只用背景色区分，没有分割线和边框
 - 简略内容超宽时，**鼠标 hover 才启动走马灯**，移开暂停并保留位置
 - 当前会话相关的对话排在前面
+- 群聊中当前会话发出的消息在右，其他成员在左；群回复显示为普通群消息
 
 ### 右侧聊天区
 
@@ -106,7 +131,11 @@ session_ask { "toSessionId": "session-2cb151f8-...", "text": "Ping" }
 
 | 工具 | 用途 |
 |---|---|
-| `session_send` | 按角色或 `@` session id 排队发送 request / reply / notice / control |
+| `session_send` | 按角色、`@` session id 或 `toGroup` 群组排队发送 request / reply / notice / control |
+| `session_group_create` | 创建群组，成员为固定 session id；创建者自动加入 |
+| `session_group_list` | 查看自己所在的群组、成员及其当前角色；lead 可看全部 |
+| `session_group_add` | 创建者或 lead 向群组添加成员 |
+| `session_group_remove` | 成员退群，或创建者/lead 移除他人；创建者不可移除 |
 | `session_ask` | 发送请求并在本回合内等待回复（默认 90 秒，超时回退异步） |
 | `session_inbox` | 读取投递到本会话的消息，默认标记已读 |
 | `session_reply` | 回复收到的消息，路由回原发送方并标记 acked |
@@ -167,6 +196,8 @@ session_ask { "toSessionId": "session-2cb151f8-...", "text": "Ping" }
       messageTtlMs: 86400000
       rateLimitPerMinute: 30
       maxInboxItems: 100
+      maxGroups: 50                 # 每个 profile 的群组上限
+      maxGroupMembers: 20           # 单个群组的成员上限
     security:
       allowDirectSessionTargets: true  # 是否接受 @ 引用的 session id
     roles:
@@ -238,3 +269,9 @@ ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test tests/*.test.mjs
 **输入栏不能发送？** 检查当前会话是否在该对话中、对方是否有绑定会话、输入是否为空。
 
 **点击文件没反应？** Host 桌面无法打开该路径时会显示错误条；确认路径存在或本机有对应默认应用。
+
+**群组消息和回复分别去哪里？** 群发会投递到每个其他成员；成员回复群消息时，回复会广播给其他所有群成员。成员是固定 session id，不随角色绑定变化。
+
+**为什么面板里看不到某个群组？** 只有当前会话在群成员列表里时，面板才会显示该群组；用 `session_group_add` 把当前 session id 加进去。
+
+**群组名可以改吗？** 当前版本不支持改名；可以新建群组后重新添加成员。

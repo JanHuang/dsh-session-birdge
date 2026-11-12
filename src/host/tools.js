@@ -9,11 +9,14 @@
  */
 
 import { formatTime, summarize } from './envelope.js'
-import { newMessageId, newThreadId } from './ids.js'
+import { newGroupId, newGroupMessageId, newMessageId, newThreadId } from './ids.js'
 import { DIRECT_ROLE, MESSAGE_KINDS, MESSAGE_PRIORITIES, SYSTEM_ROLE } from './types.js'
 
 /** Fixed model guidance that names the workflow without repeating schemas. */
-export const PROMPT_TEXT = 'Sessions in this profile can message each other through the session bridge. '
+export const PROMPT_TEXT = 'Sessions in this profile can message each other through the session chat. '
+  + 'Create a named group with session_group_create, add or remove fixed session ids with session_group_add and '
+  + 'session_group_remove, and broadcast with session_send toGroup; a group reply from session_reply broadcasts '
+  + 'to every other member. '
   + 'Use session_roles to see declared roles, then bind this session once with session_bind; send work with '
   + 'session_send, read what arrived here with session_inbox, and answer with session_reply. A role is a '
   + 'profile-wide name held by at most one independent session; subagent sessions cannot bind or receive. '
@@ -156,13 +159,160 @@ export function buildTools({ ctx, store, policy, worker, config }) {
     store.updateMetadata(id, { ...(current.metadata ?? {}), awaitReply: false })
   }
 
+  /**
+   * One group member with the role it currently holds.
+   * @param {string} groupId
+   * @returns {Array<{ sessionId: string, role: string }>}
+   */
+  const groupMembersWithRoles = groupId => store.groupMembers(groupId).map(member => ({
+    sessionId: member.sessionId,
+    role: policy.resolveCaller(member.sessionId)?.role ?? DIRECT_ROLE,
+  }))
+
+  /**
+   * @param {string} value
+   * @returns {object}
+   */
+  const requireGroup = value => {
+    const group = store.getGroup(value)
+    if (group === null) fail(`group "${value}" does not exist`)
+    return group
+  }
+
+  /**
+   * @param {string} groupId
+   * @param {string} sessionId
+   * @returns {boolean}
+   */
+  const isGroupMember = (groupId, sessionId) => store.groupMembers(groupId)
+    .some(member => member.sessionId === sessionId)
+
+  /**
+   * @param {object} group
+   * @param {string} sessionId
+   * @returns {boolean}
+   */
+  const canAdminGroup = (group, sessionId) => group.createdBySession === sessionId
+    || policy.resolveCaller(sessionId)?.role === 'lead'
+
+  /**
+   * Validate that one fixed member is a visible top-level session.
+   * @param {import('@deepseek-ai/dsh-tools').ToolRunContext} exec
+   * @param {string} sessionId
+   */
+  const validateGroupMember = async (exec, sessionId) => {
+    const items = await listSessions(exec)
+    const summary = items.find(item => String(item.sessionId) === sessionId)
+    if (summary === undefined) fail(`session "${sessionId}" is not visible in this profile`)
+    if (summary.origin === 'subagent') {
+      fail(`session "${sessionId}" is a subagent session; groups only contain independent top-level sessions`)
+    }
+    return summary
+  }
+
+  /**
+   * Reject a fan-out when any recipient's queue is already full.
+   * @param {Array<{ sessionId: string, role: string }>} recipients
+   */
+  const assertGroupQueues = recipients => {
+    for (const recipient of recipients) {
+      if (store.pendingTargetCount(recipient.sessionId, recipient.role) >= limits.maxPendingPerSession) {
+        fail(`session "${recipient.sessionId}" already has ${limits.maxPendingPerSession} queued or in-flight messages`)
+      }
+    }
+  }
+
+  /**
+   * @param {string} value
+   * @returns {string}
+   */
+  const groupName = value => {
+    const name = value.trim()
+    if (name === '') fail('group name must be non-empty')
+    if ([...name].length > 60) fail('group name must be at most 60 characters')
+    if (/[\u0000-\u001f]/.test(name)) fail('group name must not contain control characters')
+    return name
+  }
+
+  /**
+   * Broadcast one new logical message to every other group member.
+   * @param {unknown} args
+   * @param {import('@deepseek-ai/dsh-tools').ToolRunContext} exec
+   * @param {string} groupArg
+   * @param {string} text
+   * @returns {Promise<string>}
+   */
+  const sendGroup = async (args, exec, groupArg, text) => {
+    const callerSession = requireSession(exec)
+    const group = requireGroup(groupArg)
+    await assertTopLevelSession(ctx, callerSession, exec.signal, fail)
+    if (!isGroupMember(group.id, callerSession)) {
+      fail(`this session is not a member of group "${group.name}"`)
+    }
+    const fromRole = policy.resolveCaller(callerSession)?.role ?? DIRECT_ROLE
+    const kind = optionalKind(args, 'kind')
+    if (kind === 'reply') fail('use session_reply to answer a group message; session_send toGroup starts a new group message')
+    const priority = optionalPriority(args, 'priority') ?? 'normal'
+    const threadId = optionalString(args, 'threadId') ?? `group:${group.id}`
+    assertShort(threadId, 'threadId', 120)
+    const idempotencyKey = optionalString(args, 'idempotencyKey')
+    if (idempotencyKey !== undefined && idempotencyKey.length > 200) {
+      fail('idempotencyKey must be at most 200 characters')
+    }
+    const rate = policy.checkRate(fromRole)
+    if (!rate.allowed) fail(rate.reason)
+    const recipients = groupMembersWithRoles(group.id).filter(member => member.sessionId !== callerSession)
+    assertGroupQueues(recipients)
+    const now = Date.now()
+    const { groupMessage, deliveries, inserted } = store.insertGroupMessage({
+      id: newGroupMessageId(),
+      groupId: group.id,
+      fromRole,
+      fromSessionId: callerSession,
+      content: text,
+      kind: kind ?? 'request',
+      threadId,
+      metadata: optionalMetadata(args, 'metadata', limits.maxMetadataChars),
+      idempotencyKey,
+      createdAt: now,
+      priority,
+      expiresAt: now + limits.messageTtlMs,
+      recipients,
+    })
+    if (!inserted) {
+      return `duplicate: groupMessageId=${groupMessage.id} group="${group.name}" (${group.id}) recipients=${deliveries.length}\nNo second message was queued for idempotencyKey="${idempotencyKey}".`
+    }
+    store.audit({
+      at: now,
+      action: 'group_send',
+      messageId: groupMessage.id,
+      actorRole: fromRole,
+      actorSession: callerSession,
+      toRole: 'group',
+      toSession: group.id,
+      detail: `kind=${kind ?? 'request'} priority=${priority} thread=${threadId} recipients=${deliveries.length}`,
+    })
+    if (deliveries.length > 0) worker.kick()
+    const lines = [
+      `queued groupMessageId=${groupMessage.id} group="${group.name}" (${group.id}) recipients=${deliveries.length} thread=${threadId} status=pending`,
+    ]
+    if (deliveries.length === 0) {
+      lines.push('the group has no other members, so no delivery was queued')
+    } else {
+      lines.push(`recipients: ${deliveries.map(message => message.toSessionId).join(', ')}`)
+      lines.push('Each member receives an independent delivery; follow one with session_status messageId=<delivery id>.')
+    }
+    return lines.join('\n')
+  }
+
   return [
     {
       name: 'session_send',
-      description: 'Queue one message for another session, addressed by role or by an @ session id. Returns immediately; delivery waits for the target, retries transient failures, and survives restarts. The message arrives in the target as ordinary user text labelled with this sender. For a same-turn reply, use session_ask.',
+      description: 'Queue one message for another session, addressed by role, @ session id, or a named session group. Returns immediately; delivery waits for the target, retries transient failures, and survives restarts. A group send fans out one independent delivery per member. The message arrives in the target as ordinary user text labelled with this sender. For a same-turn reply, use session_ask; for a group reply, use session_reply.',
       parameters: objectParameters({
-        toRole: { type: 'string', description: 'Destination role name, as listed by session_roles. Use this or toSessionId.' },
-        toSessionId: { type: 'string', description: 'Destination session id from the user\'s @ reference. Use this or toRole; the session need not hold a role.' },
+        toRole: { type: 'string', description: 'Destination role name, as listed by session_roles. Use this, toSessionId, or toGroup.' },
+        toSessionId: { type: 'string', description: 'Destination session id from the user\'s @ reference. Use this, toRole, or toGroup; the session need not hold a role.' },
+        toGroup: { type: 'string', description: 'Group name or grp_ id. Sends one message to every other member; this session must be a member.' },
         text: { type: 'string', description: 'Plain-text message body.' },
         kind: { type: 'string', enum: MESSAGE_KINDS, description: 'Message kind. Defaults to request, or reply when replyTo is set.' },
         threadId: { type: 'string', description: 'Thread shared by related messages. Defaults to the reply thread or a new thread.' },
@@ -177,6 +327,16 @@ export function buildTools({ ctx, store, policy, worker, config }) {
         const text = normalizeContent(args, 'text', limits.maxContentChars)
         const toRoleArg = optionalString(args, 'toRole')
         const toSessionArg = optionalString(args, 'toSessionId')
+        const toGroupArg = optionalString(args, 'toGroup')
+        if (toGroupArg !== undefined) {
+          if (toRoleArg !== undefined || toSessionArg !== undefined) {
+            fail('provide exactly one of toGroup, toRole, or toSessionId')
+          }
+          if (args.replyTo !== undefined) {
+            fail('use session_reply to answer a group message; session_send toGroup starts a new group message')
+          }
+          return sendGroup(args, exec, toGroupArg, text)
+        }
         const destination = await resolveDestination(exec, toRoleArg, toSessionArg)
         const caller = resolveSender(exec, destination)
         const fromRole = caller?.role ?? DIRECT_ROLE
@@ -291,6 +451,16 @@ export function buildTools({ ctx, store, policy, worker, config }) {
         const text = normalizeContent(args, 'text', limits.maxContentChars)
         const toRoleArg = optionalString(args, 'toRole')
         const toSessionArg = optionalString(args, 'toSessionId')
+        const toGroupArg = optionalString(args, 'toGroup')
+        if (toGroupArg !== undefined) {
+          if (toRoleArg !== undefined || toSessionArg !== undefined) {
+            fail('provide exactly one of toGroup, toRole, or toSessionId')
+          }
+          if (args.replyTo !== undefined) {
+            fail('use session_reply to answer a group message; session_send toGroup starts a new group message')
+          }
+          return sendGroup(args, exec, toGroupArg, text)
+        }
         const destination = await resolveDestination(exec, toRoleArg, toSessionArg)
         const caller = resolveSender(exec, destination)
         const fromRole = caller?.role ?? DIRECT_ROLE
@@ -414,14 +584,17 @@ export function buildTools({ ctx, store, policy, worker, config }) {
           lines.push(`${total - messages.length} more message(s); call session_inbox again with a higher limit (max ${limits.maxInboxItems}).`)
         }
         messages.forEach((message, index) => {
+          const group = message.groupId === undefined ? null : store.getGroup(message.groupId)
+          const groupLabel = group === null ? '' : ` group="${group.name}" (${group.id})`
           lines.push('')
           lines.push(
-            `${index + 1}. messageId=${message.id} from=${message.fromRole} kind=${message.kind}`
+            `${index + 1}. messageId=${message.id} from=${message.fromRole} kind=${message.kind}${groupLabel}`
             + ` priority=${message.priority} thread=${message.threadId} sent=${formatTime(message.createdAt)}`,
           )
           lines.push(`   ${summarize(message, 600)}`)
           if (message.kind === 'request' || message.kind === 'control') {
             lines.push(`   answer: session_reply messageId=${message.id} text=...`)
+            if (group !== null) lines.push('   the reply broadcasts to every other group member')
           }
         })
         return lines.join('\n')
@@ -449,6 +622,50 @@ export function buildTools({ ctx, store, policy, worker, config }) {
         if (!rate.allowed) fail(rate.reason)
 
         const now = Date.now()
+        if (original.groupId !== undefined && original.groupMessageId !== undefined) {
+          const group = requireGroup(original.groupId)
+          if (!isGroupMember(group.id, callerSession)) {
+            fail(`this session is no longer a member of group "${group.name}"`)
+          }
+          const recipients = groupMembersWithRoles(group.id).filter(member => member.sessionId !== callerSession)
+          assertGroupQueues(recipients)
+          const { groupMessage, deliveries } = store.insertGroupMessage({
+            id: newGroupMessageId(),
+            groupId: group.id,
+            replyToGroupMessageId: original.groupMessageId,
+            fromRole,
+            fromSessionId: callerSession,
+            content: text,
+            kind: 'reply',
+            threadId: original.threadId,
+            metadata: undefined,
+            createdAt: now,
+            priority: original.priority,
+            expiresAt: now + limits.messageTtlMs,
+            recipients,
+          })
+          store.markAcked(original.id, now)
+          store.audit({
+            at: now,
+            action: 'acked',
+            messageId: original.id,
+            actorRole: fromRole,
+            actorSession: callerSession,
+            detail: `group reply ${groupMessage.id}`,
+          })
+          store.audit({
+            at: now,
+            action: 'group_send',
+            messageId: groupMessage.id,
+            actorRole: fromRole,
+            actorSession: callerSession,
+            toRole: 'group',
+            toSession: group.id,
+            detail: `kind=reply thread=${groupMessage.threadId} recipients=${deliveries.length}`,
+          })
+          if (deliveries.length > 0) worker.kick()
+          return `replied groupMessageId=${groupMessage.id} group="${group.name}" (${group.id}) recipients=${deliveries.length} thread=${groupMessage.threadId} status=pending\nOriginal ${original.id} is now acked; the reply broadcasts to every other member.`
+        }
         const awaitReply = original.metadata?.awaitReply === true
         const { message } = store.insertMessage({
           id: newMessageId(),
@@ -503,6 +720,27 @@ export function buildTools({ ctx, store, policy, worker, config }) {
         const callerSession = requireSession(exec)
         const callerRole = policy.resolveCaller(callerSession)?.role
         const messageId = requireString(args, 'messageId').trim()
+        const groupMessage = store.getGroupMessage(messageId)
+        if (groupMessage !== null) {
+          const group = requireGroup(groupMessage.groupId)
+          if (!isGroupMember(group.id, callerSession) && callerRole !== 'lead') {
+            fail(`this session is not a member of group "${group.name}"`)
+          }
+          const deliveries = store.groupDeliveryStatus(groupMessage.id)
+          const counts = new Map()
+          for (const delivery of deliveries) counts.set(delivery.status, (counts.get(delivery.status) ?? 0) + 1)
+          return [
+            `group message ${groupMessage.id}`,
+            `group: "${group.name}" (${group.id})`,
+            `from: ${groupMessage.fromRole} (${groupMessage.fromSessionId})`,
+            ...(groupMessage.replyTo === undefined ? [] : [`replyTo: ${groupMessage.replyTo}`]),
+            `kind: ${groupMessage.kind}  thread: ${groupMessage.threadId}`,
+            `created: ${formatTime(groupMessage.createdAt)}`,
+            `recipients: ${deliveries.length}  ${[...counts.entries()].map(([status, count]) => `${status}=${count}`).join(' ') || '(none)'}`,
+            ...deliveries.map(delivery => `- ${delivery.toSessionId} (${delivery.toRole}): ${delivery.status}${delivery.lastError === undefined ? '' : ` — ${delivery.lastError}`}`),
+            `body: ${groupMessage.content.slice(0, 300)}`,
+          ].join('\n')
+        }
         const message = store.getMessage(messageId)
         if (message === null) fail(`message "${messageId}" does not exist`)
         const participant = message.fromSessionId === callerSession
@@ -517,6 +755,8 @@ export function buildTools({ ctx, store, policy, worker, config }) {
           `from: ${message.fromRole} (${message.fromSessionId})`,
           `to: ${message.toRole}${message.toSessionId === undefined ? ' (unbound)' : ` (${message.toSessionId})`}`,
           `kind: ${message.kind}  priority: ${message.priority}  thread: ${message.threadId}`,
+          ...(message.groupId === undefined ? [] : [`group: ${store.getGroup(message.groupId)?.name ?? message.groupId} (${message.groupId})`]),
+          ...(message.groupMessageId === undefined ? [] : [`group message: ${message.groupMessageId}`]),
           ...(message.replyTo === undefined ? [] : [`replyTo: ${message.replyTo}`]),
           `attempts: ${message.attempts}`,
           `waiting: ${waitingLine(message)}`,
@@ -659,6 +899,152 @@ export function buildTools({ ctx, store, policy, worker, config }) {
         }
         lines.push(`system sender: ${SYSTEM_ROLE} (bridge-generated failure notices)`)
         return lines.join('\n')
+      },
+    },
+
+    {
+      name: 'session_group_create',
+      description: 'Create a named session group. Members are fixed session ids from the profile\'s independent top-level sessions; the creator is always a member. Groups are delivered to with session_send toGroup, and a group reply broadcasts to every other member.',
+      parameters: objectParameters({
+        name: { type: 'string', description: 'Unique group name, at most 60 characters.' },
+        description: { type: 'string', description: 'Optional short description.' },
+        members: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Initial member session ids, excluding the creator who is added automatically.',
+        },
+      }, ['name']),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const callerSession = requireSession(exec)
+        await assertTopLevelSession(ctx, callerSession, exec.signal, fail)
+        const name = groupName(requireString(args, 'name'))
+        if (store.getGroup(name) !== null) fail(`group "${name}" already exists`)
+        if (store.listGroups().length >= limits.maxGroups) fail(`the profile already has ${limits.maxGroups} groups`)
+        const rawMembers = args.members
+        if (rawMembers !== undefined && (!Array.isArray(rawMembers) || rawMembers.some(value => typeof value !== 'string' || value.trim() === ''))) {
+          fail('members must be an array of non-empty session ids')
+        }
+        const memberIds = [...new Set([callerSession, ...(rawMembers ?? []).map(value => value.trim())])]
+        if (memberIds.length > limits.maxGroupMembers) fail(`a group may have at most ${limits.maxGroupMembers} members`)
+        for (const sessionId of memberIds) await validateGroupMember(exec, sessionId)
+        const description = optionalString(args, 'description')
+        if (description !== undefined && [...description].length > 200) fail('group description must be at most 200 characters')
+        const now = Date.now()
+        let group
+        try {
+          group = store.createGroup({
+            id: newGroupId(),
+            name,
+            description,
+            createdBySession: callerSession,
+            memberIds,
+            now,
+          })
+        } catch (error) {
+          if (error instanceof Error && /UNIQUE constraint failed/.test(error.message)) fail(`group "${name}" already exists`)
+          throw error
+        }
+        store.audit({
+          at: now,
+          action: 'group_create',
+          actorSession: callerSession,
+          actorRole: policy.resolveCaller(callerSession)?.role,
+          toSession: group.id,
+          detail: `name="${name}" members=${memberIds.length}`,
+        })
+        const members = groupMembersWithRoles(group.id)
+        return [
+          `created groupId=${group.id} name="${group.name}" members=${members.length}`,
+          ...members.map(member => `- ${member.sessionId}${member.sessionId === callerSession ? ' (you)' : ''} role=${member.role}`),
+          'Broadcast with: session_send toGroup="' + group.name + '" text=...',
+        ].join('\n')
+      },
+    },
+
+    {
+      name: 'session_group_list',
+      description: 'List the session groups this session belongs to, with each member\'s fixed session id and current role. The lead role sees every group.',
+      parameters: objectParameters({}),
+      output: TEXT_OUTPUT,
+      execute: async (_args, exec) => {
+        const callerSession = requireSession(exec)
+        const callerRole = policy.resolveCaller(callerSession)?.role
+        const groups = store.listGroups().filter(group => callerRole === 'lead' || isGroupMember(group.id, callerSession))
+        if (groups.length === 0) return `groups: 0 (session=${callerSession})`
+        const lines = [`groups: ${groups.length}`]
+        for (const group of groups) {
+          const members = groupMembersWithRoles(group.id)
+          const mine = members.some(member => member.sessionId === callerSession) ? ' (member)' : ''
+          lines.push('')
+          lines.push(`- ${group.name}  id=${group.id}  members=${members.length}${mine}  created=${formatTime(group.createdAt)}`)
+          if (group.description !== undefined) lines.push(`  ${group.description}`)
+          lines.push(`  members: ${members.map(member => `${member.sessionId}(${member.role})`).join(', ')}`)
+        }
+        return lines.join('\n')
+      },
+    },
+
+    {
+      name: 'session_group_add',
+      description: 'Add one fixed top-level session id to a group. Only the group creator or the lead role may add members.',
+      parameters: objectParameters({
+        group: { type: 'string', description: 'Group name or grp_ id.' },
+        sessionId: { type: 'string', description: 'Independent top-level session id to add.' },
+      }, ['group', 'sessionId']),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const callerSession = requireSession(exec)
+        const group = requireGroup(requireString(args, 'group'))
+        if (!canAdminGroup(group, callerSession)) fail(`only the creator of group "${group.name}" or the lead role may add members`)
+        const target = requireString(args, 'sessionId').trim()
+        if (isGroupMember(group.id, target)) return `already a member: group="${group.name}" session=${target}`
+        await validateGroupMember(exec, target)
+        if (store.groupMembers(group.id).length >= limits.maxGroupMembers) {
+          fail(`group "${group.name}" already has ${limits.maxGroupMembers} members`)
+        }
+        const now = Date.now()
+        store.addGroupMember({ groupId: group.id, sessionId: target, addedBySession: callerSession, now })
+        store.audit({
+          at: now,
+          action: 'group_add',
+          actorSession: callerSession,
+          actorRole: policy.resolveCaller(callerSession)?.role,
+          toSession: target,
+          detail: `group=${group.id}`,
+        })
+        return `added session=${target} to group="${group.name}" (${group.id}); members=${store.groupMembers(group.id).length}`
+      },
+    },
+
+    {
+      name: 'session_group_remove',
+      description: 'Remove one session id from a group. A member may leave; the creator or the lead role may remove others. The creator cannot be removed.',
+      parameters: objectParameters({
+        group: { type: 'string', description: 'Group name or grp_ id.' },
+        sessionId: { type: 'string', description: 'Member session id to remove.' },
+      }, ['group', 'sessionId']),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const callerSession = requireSession(exec)
+        const group = requireGroup(requireString(args, 'group'))
+        const target = requireString(args, 'sessionId').trim()
+        if (!isGroupMember(group.id, target)) fail(`session "${target}" is not a member of group "${group.name}"`)
+        if (target === group.createdBySession) fail('the group creator cannot be removed')
+        if (target !== callerSession && !canAdminGroup(group, callerSession)) {
+          fail(`only the creator of group "${group.name}" or the lead role may remove other members`)
+        }
+        const now = Date.now()
+        store.removeGroupMember(group.id, target, now)
+        store.audit({
+          at: now,
+          action: 'group_remove',
+          actorSession: callerSession,
+          actorRole: policy.resolveCaller(callerSession)?.role,
+          toSession: target,
+          detail: `group=${group.id}`,
+        })
+        return `removed session=${target} from group="${group.name}" (${group.id}); members=${store.groupMembers(group.id).length}`
       },
     },
   ]

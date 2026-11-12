@@ -1,4 +1,4 @@
-# DSH Session Bridge 技术方案
+# DSH Session Chat 技术方案
 
 > **实现说明（v0.1.0）**
 >
@@ -14,7 +14,7 @@
 > - 投递幂等：`sessionController.prompt` 的 `requestId` 直接使用 `messageId`，
 >   目标 Agent 对重复 prompt 去重。
 > - M6 Client 消息面板已实现（v0.2）：在会话 View 行「轨迹」之后注册
->   「会话桥」标签：同一对会话的所有线程合并为一个聊天窗；左侧会话列表
+>   「会话聊天」标签：同一对会话的所有线程合并为一个聊天窗；左侧会话列表
 >   超高时独立滚动，右侧聊天头部与底部输入栏固定，仅消息区滚动；默认显示
 >   当天，滚动到顶部或点击上拉条时通过 `/api/session-bridge/history`
 >   每次加载 20 条更早消息，当天为空时自动加载最新一页。
@@ -39,11 +39,20 @@
 >   超时回退为异步消息，不丢消息）。回复消费后标记 acked，不会重复投递。
 > - 回复不再受 `canSendTo` 限制（回复已收到的消息是天然权限），
 >   修复了默认角色图中非对称边导致回复被拒的死链。
+> - **v0.4 会话群组**：新增 `groups` / `group_members` / `group_messages`；
+>   `session_group_create/list/add/remove` 管理群组，成员是固定 session id；
+>   `session_send toGroup` 为每个其他成员生成独立投递，某个成员失败不影响
+>   其他人；成员用 `session_reply` 回复群消息时，回复广播给除自己外的所有
+>   成员。面板把群组显示为带「群组」标签的会话，仅当前会话是成员时可见；
+>   群聊复用历史分页、SSE、链接识别和输入栏。群组创建/成员管理先用工具，
+>   v1 不做群组设置 UI。
+> - 项目显示名改为 **Session Chat / 会话聊天**；本地包名仍为
+>   `dsh-session-bridge`，npm 发布名计划 `@janhuang/dsh-session-chat`。
 >
 > 原始设计内容如下。
 
 > 用途：让不同独立 Session（实现、审核、设计、部署）异步互相投递消息。
-> 建议作为新仓库 `dsh-session-bridge` 的 `SPEC.md` 使用。
+> 建议作为新仓库 `session-chat`（本地包名 `dsh-session-bridge`）的 `SPEC.md` 使用。
 
 ## 1. 目标
 
@@ -480,4 +489,4 @@ ctx.sessionController.wait({ sessionId, timeoutMs }, signal)
 | Headless bus | 是 | 否（只能 headless） | 后台 worker |
 | **Session-bridge 插件** | 是 | 是 | 实现/审核/设计/部署分工 |
 
-本方案作为 `dsh-session-bridge` 新仓库的起点。
+本方案作为 Session Chat（本地包名 `dsh-session-bridge`）新仓库的起点。

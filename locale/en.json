@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Session bridge",
+    "title": "Session Chat",
     "detail": "docs/DETAIL.md",
-    "description": "Durable asynchronous messaging between independent sessions, plus @ session addressing. Bind a session to a role with session_bind, or target a session id from an @ reference; session_send queues a message, session_inbox reads messages delivered here, session_reply answers one, and session_ask waits for a reply in the same turn. A Bridge view tab after Trajectory follows the host light/dark theme: it merges all threads between the same session pair into one stream-card chat, shows today's messages by default, collapses earlier history, and appends new messages live over an authenticated event stream. Lead cards use the neutral surface and Bridge replies always use #165DFF; messages include a request/reply tag, thread id, time, and a copyable PHP code block. The composer can queue a request to the selected peer. Tools are available to sessions whose preset exposes them; subagent sessions cannot bind or receive. Requires a local database under ~/.dsh/session-bridge and Full access to install."
+    "description": "Durable messaging, group chats, and role routing between independent DSH sessions."
   }
 }

@@ -222,3 +222,73 @@ test('conversation history pages newest-first and returns pages oldest-first', t
   assert.deepEqual(rest.messages.map(message => message.id), ['h0'])
   assert.equal(rest.hasMore, false)
 })
+
+test('groups fan out one logical message and keep direct history clean', t => {
+  const store = freshStore(t)
+  store.createGroup({
+    id: 'grp_1',
+    name: 'frontend',
+    createdBySession: 'session-impl',
+    memberIds: ['session-impl', 'session-reviewer', 'session-designer'],
+    now: 10,
+  })
+  assert.deepEqual(store.groupMembers('grp_1').map(member => member.sessionId), [
+    'session-designer', 'session-impl', 'session-reviewer',
+  ])
+  const first = store.insertGroupMessage({
+    id: 'gmsg_1',
+    groupId: 'grp_1',
+    fromRole: 'impl',
+    fromSessionId: 'session-impl',
+    content: 'hello group',
+    kind: 'request',
+    threadId: 'group:grp_1',
+    createdAt: 20,
+    priority: 'normal',
+    expiresAt: 1_000,
+    recipients: [
+      { sessionId: 'session-reviewer', role: 'reviewer' },
+      { sessionId: 'session-designer', role: 'designer' },
+    ],
+  })
+  assert.equal(first.inserted, true)
+  assert.equal(first.deliveries.length, 2)
+  assert.equal(store.recentGroupMessages(10).length, 1)
+  assert.equal(store.groupDeliveryStatus('gmsg_1').length, 2)
+  assert.equal(store.recentMessages(10).length, 0)
+  assert.equal(store.groupMessagesBefore('grp_1', undefined, '', 20).messages[0].content, 'hello group')
+
+  const duplicate = store.insertGroupMessage({
+    id: 'gmsg_2',
+    groupId: 'grp_1',
+    fromRole: 'impl',
+    fromSessionId: 'session-impl',
+    content: 'hello group',
+    kind: 'request',
+    threadId: 'group:grp_1',
+    createdAt: 30,
+    priority: 'normal',
+    expiresAt: 1_000,
+    idempotencyKey: 'group-once',
+    recipients: [{ sessionId: 'session-reviewer', role: 'reviewer' }],
+  })
+  assert.equal(duplicate.inserted, true)
+  const repeated = store.insertGroupMessage({
+    id: 'gmsg_3',
+    groupId: 'grp_1',
+    fromRole: 'impl',
+    fromSessionId: 'session-impl',
+    content: 'hello group',
+    kind: 'request',
+    threadId: 'group:grp_1',
+    createdAt: 40,
+    priority: 'normal',
+    expiresAt: 1_000,
+    idempotencyKey: 'group-once',
+    recipients: [{ sessionId: 'session-reviewer', role: 'reviewer' }],
+  })
+  assert.equal(repeated.inserted, false)
+  assert.equal(repeated.groupMessage.id, 'gmsg_2')
+  assert.equal(store.removeGroupMember('grp_1', 'session-designer', 50), true)
+  assert.equal(store.groupMembers('grp_1').length, 2)
+})

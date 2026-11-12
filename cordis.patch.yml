@@ -1,4 +1,4 @@
-# Bundle patch for dsh-session-bridge.
+# Bundle patch for the Session Chat plugin (local package dsh-session-bridge).
 #
 # The row loads this package's Host entry (`src/host/index.js`) as a plain
 # Cordis plugin. All configuration is optional and defaults apply when a field

@@ -443,3 +443,94 @@ test('status explains an unbound destination', async t => {
   const status = await bridge.call('session_status', 'session-impl', { messageId })
   assert.match(status, /waiting: destination role has no bound session yet/)
 })
+
+test('a group fans out and a reply broadcasts to the other members', async t => {
+  const bridge = createBridge(t)
+  bridge.controller.sessionsList = [
+    { sessionId: 'session-impl', origin: 'root' },
+    { sessionId: 'session-reviewer', origin: 'root' },
+    { sessionId: 'session-designer', origin: 'root' },
+  ]
+  idle(bridge, 'session-impl', 'session-reviewer', 'session-designer')
+  await bind(bridge, 'session-impl', 'impl')
+  await bind(bridge, 'session-reviewer', 'reviewer')
+  await bind(bridge, 'session-designer', 'designer')
+
+  const created = await bridge.call('session_group_create', 'session-impl', {
+    name: 'frontend',
+    members: ['session-reviewer', 'session-designer'],
+  })
+  const groupId = /groupId=(grp_[0-9a-f-]+)/.exec(created)?.[1]
+  assert.ok(groupId, created)
+  assert.match(created, /members=3/)
+
+  const sent = await bridge.call('session_send', 'session-impl', {
+    toGroup: 'frontend',
+    text: 'hello group',
+  })
+  const groupMessageId = /groupMessageId=(gmsg_[0-9a-f-]+)/.exec(sent)?.[1]
+  assert.ok(groupMessageId, sent)
+  assert.match(sent, /recipients=2/)
+  await bridge.worker.drain()
+  assert.equal(bridge.store.groupDeliveryStatus(groupMessageId).length, 2)
+
+  const reviewerInbox = await bridge.call('session_inbox', 'session-reviewer', {})
+  assert.match(reviewerInbox, /group="frontend"/)
+  const deliveryId = /messageId=(msg_[0-9a-f-]+)/.exec(reviewerInbox)?.[1]
+  assert.ok(deliveryId, reviewerInbox)
+
+  const reply = await bridge.call('session_reply', 'session-reviewer', {
+    messageId: deliveryId,
+    text: 'ack from reviewer',
+  })
+  assert.match(reply, /broadcasts to every other member/)
+  await bridge.worker.drain()
+  const implInbox = await bridge.call('session_inbox', 'session-impl', {})
+  assert.match(implInbox, /ack from reviewer/)
+  const designerInbox = await bridge.call('session_inbox', 'session-designer', {})
+  assert.match(designerInbox, /ack from reviewer/)
+
+  const status = await bridge.call('session_status', 'session-impl', { messageId: groupMessageId })
+  assert.match(status, /group message/)
+  assert.match(status, /recipients: 2/)
+  const listed = await bridge.call('session_group_list', 'session-reviewer', {})
+  assert.match(listed, /frontend/)
+  assert.match(listed, /members=3/)
+})
+
+test('group membership and administration are enforced', async t => {
+  const bridge = createBridge(t)
+  bridge.controller.sessionsList = [
+    { sessionId: 'session-impl', origin: 'root' },
+    { sessionId: 'session-reviewer', origin: 'root' },
+    { sessionId: 'session-designer', origin: 'root' },
+  ]
+  idle(bridge, 'session-impl', 'session-reviewer', 'session-designer')
+  await bind(bridge, 'session-impl', 'impl')
+  await bind(bridge, 'session-reviewer', 'reviewer')
+
+  await bridge.call('session_group_create', 'session-impl', {
+    name: 'restricted',
+    members: ['session-reviewer'],
+  })
+  await assert.rejects(
+    bridge.call('session_send', 'session-designer', { toGroup: 'restricted', text: 'not allowed' }),
+    /not a member of group/,
+  )
+  await assert.rejects(
+    bridge.call('session_group_add', 'session-reviewer', { group: 'restricted', sessionId: 'session-designer' }),
+    /only the creator/,
+  )
+  assert.match(
+    await bridge.call('session_group_add', 'session-impl', { group: 'restricted', sessionId: 'session-designer' }),
+    /added session=session-designer/,
+  )
+  await assert.rejects(
+    bridge.call('session_group_remove', 'session-impl', { group: 'restricted', sessionId: 'session-impl' }),
+    /creator cannot be removed/,
+  )
+  assert.match(
+    await bridge.call('session_group_remove', 'session-reviewer', { group: 'restricted', sessionId: 'session-reviewer' }),
+    /removed session=session-reviewer/,
+  )
+})

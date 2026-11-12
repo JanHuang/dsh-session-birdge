@@ -77,6 +77,8 @@ export function resolveConfig(raw, env = process.env) {
       messageTtlMs: integer(limits.messageTtlMs, 86_400_000, 'limits.messageTtlMs', 60_000, 31_536_000_000),
       rateLimitPerMinute: integer(limits.rateLimitPerMinute, 30, 'limits.rateLimitPerMinute', 1, 10_000),
       maxInboxItems: integer(limits.maxInboxItems, 100, 'limits.maxInboxItems', 1, 1_000),
+      maxGroups: integer(limits.maxGroups, 50, 'limits.maxGroups', 1, 1_000),
+      maxGroupMembers: integer(limits.maxGroupMembers, 20, 'limits.maxGroupMembers', 2, 100),
     }),
     security: Object.freeze({
       allowDirectSessionTargets: booleanValue(

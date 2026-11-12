@@ -15,7 +15,7 @@
  * @module dsh-session-bridge/routes
  */
 
-import { newMessageId, newThreadId } from './ids.js'
+import { newGroupMessageId, newMessageId, newThreadId } from './ids.js'
 
 /** One-shot snapshot route used by the client bundle. */
 export const SNAPSHOT_PATH = '/api/session-bridge/snapshot'
@@ -52,13 +52,13 @@ export function registerBridgeRoutes(ctx, deps) {
       path: SNAPSHOT_PATH,
       methods: ['GET'],
       requestBody: 'buffered',
-      fetch: request => handleSnapshot(ctx, deps.store, request),
+      fetch: request => handleSnapshot(ctx, deps, request),
     })
     const disposeEvents = ctx.connection.fetch.register({
       path: EVENTS_PATH,
       methods: ['GET'],
       requestBody: 'buffered',
-      fetch: request => openEventStream(ctx, deps.store, request, streams),
+      fetch: request => openEventStream(ctx, deps, request, streams),
     })
     const disposeSend = ctx.connection.fetch.register({
       path: SEND_PATH,
@@ -89,15 +89,20 @@ export function registerBridgeRoutes(ctx, deps) {
  * @param {Request} request
  * @returns {Promise<Response>}
  */
-async function handleSnapshot(ctx, store, request) {
+async function handleSnapshot(ctx, deps, request) {
   const url = new URL(request.url)
   const requested = Number(url.searchParams.get('limit') ?? String(DEFAULT_LIMIT))
   const limit = Number.isFinite(requested)
     ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(requested)))
     : DEFAULT_LIMIT
-  const messages = store.recentMessages(limit)
+  const messages = deps.store.recentMessages(limit)
+  const groupMessages = deps.store.recentGroupMessages(limit)
+  const groups = groupsWithMembers(deps.store, deps.policy)
   const items = await listSessions(ctx, request.signal)
-  return Response.json({ ...buildSnapshot(messages, items, Date.now()), version: store.version }, {
+  return Response.json({
+    ...buildSnapshot(messages, groupMessages, groups, items, Date.now()),
+    version: deps.store.version,
+  }, {
     headers: { 'cache-control': 'no-store' },
   })
 }
@@ -110,6 +115,7 @@ async function handleSnapshot(ctx, store, request) {
  */
 function handleHistory(store, request) {
   const url = new URL(request.url)
+  const groupId = url.searchParams.get('group') ?? ''
   const sessionA = url.searchParams.get('a') ?? ''
   const sessionB = url.searchParams.get('b') ?? ''
   const limitRaw = Number(url.searchParams.get('limit') ?? '20')
@@ -117,11 +123,22 @@ function handleHistory(store, request) {
   const beforeRaw = url.searchParams.get('before')
   const before = beforeRaw === null ? undefined : Number(beforeRaw)
   const beforeId = url.searchParams.get('beforeId') ?? ''
-  if (sessionA === '' || sessionB === '' || sessionA === sessionB) {
-    return Response.json({ error: 'a and b are required distinct session ids' }, { status: 400 })
-  }
   if (before !== undefined && (!Number.isFinite(before) || beforeId === '')) {
     return Response.json({ error: 'before and beforeId must be supplied together' }, { status: 400 })
+  }
+  if (groupId !== '') {
+    const group = store.getGroup(groupId)
+    if (group === null) return Response.json({ error: 'group not found' }, { status: 404 })
+    const page = store.groupMessagesBefore(group.id, before, beforeId, limit)
+    return Response.json({
+      messages: page.messages.map(message => publicGroupMessage(store, message)),
+      hasMore: page.hasMore,
+    }, {
+      headers: { 'cache-control': 'no-store' },
+    })
+  }
+  if (sessionA === '' || sessionB === '' || sessionA === sessionB) {
+    return Response.json({ error: 'a and b are required distinct session ids, or supply group' }, { status: 400 })
   }
   const page = store.messagesBefore(sessionA, sessionB, before, beforeId, limit)
   return Response.json({ messages: page.messages.map(publicMessage), hasMore: page.hasMore }, {
@@ -146,13 +163,68 @@ async function handleSend(ctx, deps, request) {
   }
   const fromSessionId = typeof body?.fromSessionId === 'string' ? body.fromSessionId : ''
   const toSessionId = typeof body?.toSessionId === 'string' ? body.toSessionId : ''
+  const groupId = typeof body?.groupId === 'string' ? body.groupId : ''
   const text = typeof body?.text === 'string' ? body.text.trim() : ''
-  if (fromSessionId === '' || toSessionId === '') return Response.json({ error: 'fromSessionId and toSessionId are required' }, { status: 400 })
-  if (fromSessionId === toSessionId) return Response.json({ error: 'a session cannot message itself' }, { status: 400 })
+  if (fromSessionId === '') return Response.json({ error: 'fromSessionId is required' }, { status: 400 })
   if (text === '') return Response.json({ error: 'text is required' }, { status: 400 })
   if ([...text].length > deps.config.limits.maxContentChars) {
     return Response.json({ error: `text exceeds ${deps.config.limits.maxContentChars} characters` }, { status: 400 })
   }
+  if (groupId !== '') {
+    const group = deps.store.getGroup(groupId)
+    if (group === null) return Response.json({ error: 'group not found' }, { status: 404 })
+    const items = await listSessions(ctx, request.signal)
+    const from = items.find(item => String(item.sessionId) === fromSessionId)
+    if (from === undefined) return Response.json({ error: 'session is not visible' }, { status: 404 })
+    if (from.origin === 'subagent') return Response.json({ error: 'subagent sessions cannot use the chat' }, { status: 400 })
+    const members = deps.store.groupMembers(group.id)
+    if (!members.some(member => member.sessionId === fromSessionId)) {
+      return Response.json({ error: 'this session is not a member of the group' }, { status: 403 })
+    }
+    const fromRole = deps.policy.resolveCaller(fromSessionId)?.role ?? 'direct'
+    const rate = deps.policy.checkRate(fromRole)
+    if (!rate.allowed) return Response.json({ error: rate.reason }, { status: 429 })
+    const recipients = members
+      .filter(member => member.sessionId !== fromSessionId)
+      .map(member => ({
+        sessionId: member.sessionId,
+        role: deps.policy.resolveCaller(member.sessionId)?.role ?? 'direct',
+      }))
+    for (const recipient of recipients) {
+      if (deps.store.pendingTargetCount(recipient.sessionId, recipient.role) >= deps.config.limits.maxPendingPerSession) {
+        return Response.json({ error: `session ${recipient.sessionId} queue is full` }, { status: 429 })
+      }
+    }
+    const now = Date.now()
+    const { groupMessage, deliveries } = deps.store.insertGroupMessage({
+      id: newGroupMessageId(),
+      groupId: group.id,
+      fromRole,
+      fromSessionId,
+      content: text,
+      kind: 'request',
+      threadId: `group:${group.id}`,
+      metadata: undefined,
+      createdAt: now,
+      priority: 'normal',
+      expiresAt: now + deps.config.limits.messageTtlMs,
+      recipients,
+    })
+    deps.store.audit({
+      at: now,
+      action: 'group_send',
+      messageId: groupMessage.id,
+      actorRole: fromRole,
+      actorSession: fromSessionId,
+      toRole: 'group',
+      toSession: group.id,
+      detail: `kind=request source=view recipients=${deliveries.length}`,
+    })
+    deps.worker.kick()
+    return Response.json({ groupMessageId: groupMessage.id, recipients: deliveries.length }, { status: 201 })
+  }
+  if (toSessionId === '') return Response.json({ error: 'toSessionId or groupId is required' }, { status: 400 })
+  if (fromSessionId === toSessionId) return Response.json({ error: 'a session cannot message itself' }, { status: 400 })
   if (!deps.config.security.allowDirectSessionTargets) {
     return Response.json({ error: 'direct session targeting is disabled' }, { status: 403 })
   }
@@ -212,7 +284,7 @@ async function handleSend(ctx, deps, request) {
  * @param {Set<() => void>} streams
  * @returns {Promise<Response>}
  */
-function openEventStream(ctx, store, request, streams) {
+function openEventStream(ctx, deps, request, streams) {
   const encoder = new TextEncoder()
   /** @type {ReadableStreamDefaultController<Uint8Array> | undefined} */
   let controller
@@ -254,10 +326,12 @@ function openEventStream(ctx, store, request, streams) {
     }
     flushing = true
     try {
-      const messages = store.recentMessages(MAX_LIMIT)
+      const messages = deps.store.recentMessages(MAX_LIMIT)
+      const groupMessages = deps.store.recentGroupMessages(MAX_LIMIT)
+      const groups = groupsWithMembers(deps.store, deps.policy)
       const items = await listSessions(ctx, request.signal)
       if (closed) return
-      send({ type: 'snapshot', ...buildSnapshot(messages, items, Date.now()), version: store.version })
+      send({ type: 'snapshot', ...buildSnapshot(messages, groupMessages, groups, items, Date.now()), version: deps.store.version })
     } catch (error) {
       if (request.signal.aborted) {
         close()
@@ -283,7 +357,7 @@ function openEventStream(ctx, store, request, streams) {
   const stream = new ReadableStream({
     start(streamController) {
       controller = streamController
-      unsubscribe = store.subscribe(schedule)
+      unsubscribe = deps.store.subscribe(schedule)
       streams.add(close)
       request.signal.addEventListener('abort', close, { once: true })
       keepAlive = setInterval(() => {
@@ -335,14 +409,16 @@ async function listSessions(ctx, signal) {
  * @param {number} now
  * @returns {object}
  */
-export function buildSnapshot(messages, sessions, now) {
-  /** @type {Map<string, { id: string, updatedAt: number, participants: Map<string, { role: string, sessionId: string | undefined }>, threadIds: Set<string>, messages: any[] }>} */
+export function buildSnapshot(messages, groupMessages, groups, sessions, now) {
+  /** @type {Map<string, any>} */
   const conversations = new Map()
   for (const message of messages) {
     const id = pairKey(message)
     let conversation = conversations.get(id)
     if (conversation === undefined) {
-      conversation = { id, updatedAt: 0, participants: new Map(), threadIds: new Set(), messages: [] }
+      conversation = {
+        id, kind: 'direct', updatedAt: 0, participants: new Map(), threadIds: new Set(), messages: [],
+      }
       conversations.set(id, conversation)
     }
     conversation.messages.push(publicMessage(message))
@@ -350,6 +426,45 @@ export function buildSnapshot(messages, sessions, now) {
     conversation.threadIds.add(message.threadId)
     setParticipant(conversation.participants, message.fromRole, message.fromSessionId)
     setParticipant(conversation.participants, message.toRole, message.toSessionId)
+  }
+  const groupById = new Map(groups.map(group => [group.id, group]))
+  for (const message of groupMessages) {
+    const group = groupById.get(message.groupId)
+    if (group === undefined) continue
+    const id = `group:${message.groupId}`
+    let conversation = conversations.get(id)
+    if (conversation === undefined) {
+      conversation = {
+        id,
+        kind: 'group',
+        groupId: message.groupId,
+        title: group.name,
+        updatedAt: 0,
+        members: group.members,
+        participants: group.members.map(member => ({ role: member.role, sessionId: member.sessionId })),
+        threadIds: new Set(),
+        messages: [],
+      }
+      conversations.set(id, conversation)
+    }
+    conversation.messages.push(publicGroupMessageRaw(message, group.name))
+    conversation.updatedAt = Math.max(conversation.updatedAt, message.createdAt)
+    conversation.threadIds.add(message.threadId)
+  }
+  for (const group of groups) {
+    const id = `group:${group.id}`
+    if (conversations.has(id)) continue
+    conversations.set(id, {
+      id,
+      kind: 'group',
+      groupId: group.id,
+      title: group.name,
+      updatedAt: group.updatedAt,
+      members: group.members,
+      participants: group.members.map(member => ({ role: member.role, sessionId: member.sessionId })),
+      threadIds: new Set(),
+      messages: [],
+    })
   }
   const sessionMap = {}
   for (const item of sessions) {
@@ -364,18 +479,74 @@ export function buildSnapshot(messages, sessions, now) {
   }
   return {
     generatedAt: now,
-    totalMessages: messages.length,
+    totalMessages: messages.length + groupMessages.length,
     conversations: [...conversations.values()]
       .map(conversation => ({
         id: conversation.id,
+        kind: conversation.kind,
         updatedAt: conversation.updatedAt,
         participants: [...conversation.participants.values()],
         threadIds: [...conversation.threadIds],
         messages: conversation.messages,
+        ...(conversation.kind === 'group'
+          ? {
+            groupId: conversation.groupId,
+            title: conversation.title,
+            members: conversation.members,
+          }
+          : {}),
       }))
       .sort((left, right) => right.updatedAt - left.updatedAt),
     sessions: sessionMap,
   }
+}
+
+/**
+ * @param {import('./store.js').BridgeStore} store
+ * @param {import('./policy.js').BridgePolicy} policy
+ * @returns {Array<object>}
+ */
+function groupsWithMembers(store, policy) {
+  return store.listGroups().map(group => ({
+    ...group,
+    members: store.groupMembers(group.id).map(member => ({
+      sessionId: member.sessionId,
+      role: policy.resolveCaller(member.sessionId)?.role ?? 'direct',
+    })),
+  }))
+}
+
+/**
+ * @param {object} message
+ * @param {string} groupName
+ * @returns {object}
+ */
+function publicGroupMessageRaw(message, groupName) {
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    replyTo: message.replyTo,
+    fromRole: message.fromRole,
+    fromSessionId: message.fromSessionId,
+    toRole: 'group',
+    toSessionId: undefined,
+    kind: message.kind,
+    priority: 'normal',
+    content: message.content,
+    status: 'delivered',
+    createdAt: message.createdAt,
+    groupId: message.groupId,
+    groupName,
+  }
+}
+
+/**
+ * @param {import('./store.js').BridgeStore} store
+ * @param {object} message
+ * @returns {object}
+ */
+function publicGroupMessage(store, message) {
+  return publicGroupMessageRaw(message, store.getGroup(message.groupId)?.name ?? '')
 }
 
 /**
@@ -422,5 +593,7 @@ function publicMessage(message) {
     deliveredAt: message.deliveredAt,
     readAt: message.readAt,
     ackedAt: message.ackedAt,
+    groupId: message.groupId,
+    groupMessageId: message.groupMessageId,
   }
 }

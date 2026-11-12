@@ -1,8 +1,8 @@
 {
   "name": "dsh-session-bridge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "Asynchronous, durable message bridge between independent DeepSeek Harness sessions.",
+  "description": "Durable cross-session chat and groups for DeepSeek Harness.",
   "type": "module",
   "engines": {
     "node": ">=22.19.0",

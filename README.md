@@ -1,6 +1,6 @@
 English | [中文](README.zh.md)
 
-# Session bridge
+# Session Chat
 
 Asynchronous, durable messaging between independent DeepSeek Harness sessions.
 
@@ -20,6 +20,10 @@ Build the package in this checkout, then install the directory as a bundle:
 
 Installing requires Full access. The plugin creates
 `~/.dsh/session-bridge/<profile>/bridge.db` on first activation.
+
+The display name is **Session Chat**; the local development package is still
+`dsh-session-bridge`. The planned npm name is `@janhuang/dsh-session-chat`
+(the unscoped `dsh-session-chat` is already taken).
 
 ## Quick start
 
@@ -77,9 +81,27 @@ is resumed through its own preset, and an unbound role waits until a session
 binds it. Nothing is lost if the Host restarts; the user message carries the
 prompt request id, so a re-delivered prompt is accepted once.
 
+## Session groups
+
+A group is a named set of fixed top-level session ids. Create it, then broadcast
+with `session_send`:
+
+```text
+session_group_create { "name": "frontend",
+                       "members": ["session-a11933ef-...", "session-2cb151f8-..."] }
+session_send { "toGroup": "frontend", "text": "Status check" }
+```
+
+Every other member receives an independent delivery, so one member's failure
+does not block the rest. When a member answers a group message with
+`session_reply`, the reply broadcasts to every other group member, forming a
+group chat. The creator is always a member and cannot be removed; the creator or
+the lead role can add and remove others; a member may leave. Membership is by
+fixed session id, not by role binding.
+
 ## Bridge view
 
-The bundle ships a Client half. A **Bridge** tab (`会话桥`) appears in the
+The bundle ships a Client half. A **Session Chat** tab (`会话聊天`) appears in the
 conversation View row after **Trajectory** (`轨迹`) and follows the host's
 light/dark theme. The layout is a fixed sidebar plus a chat panel:
 
@@ -121,7 +143,11 @@ screenshots is [README.zh.md](README.zh.md).
 
 | Tool | Purpose |
 |---|---|
-| `session_send` | Queue a `request`, `reply`, `notice`, or `control` to a role or an `@` session id. |
+| `session_send` | Queue a `request`, `reply`, `notice`, or `control` to a role, an `@` session id, or a group (`toGroup`). |
+| `session_group_create` | Create a named group of fixed top-level session ids; the creator joins. |
+| `session_group_list` | List groups this session belongs to (lead sees all), with members and roles. |
+| `session_group_add` | Add a fixed session id; creator or lead only. |
+| `session_group_remove` | Leave a group, or remove another member as creator/lead; the creator cannot be removed. |
 | `session_ask` | Send a request and wait for the reply in this turn (bounded timeout). |
 | `session_inbox` | Read messages delivered to this session; marks them read. |
 | `session_reply` | Answer one received message; marks the original acknowledged. |
@@ -194,6 +220,8 @@ All fields are optional. Add them to the `session-bridge` row in the profile's
       messageTtlMs: 86400000
       rateLimitPerMinute: 30
       maxInboxItems: 100
+      maxGroups: 50                 # groups per profile
+      maxGroupMembers: 20           # members per group
     security:
       allowDirectSessionTargets: true  # accept a session id from an @ reference
     roles:
@@ -237,7 +265,9 @@ pending -> expired (message TTL elapsed)
 
 ## Storage
 
-The SQLite file (`node:sqlite`) holds three tables: `messages`, `roles`, and
+The SQLite file (`node:sqlite`) holds the message, role, audit, group, group
+member, and group message tables. `messages` also carries group delivery links,
+so a group send has one canonical group message and one delivery row per member.
 `audit_events`. It is profile-scoped so two DSH profiles do not share role
 bindings. The file is created with owner-only permissions. Delete the database
 to reset all bindings and history.

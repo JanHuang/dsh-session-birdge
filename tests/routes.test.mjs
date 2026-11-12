@@ -46,7 +46,7 @@ test('buildSnapshot groups every thread of one session pair into one conversatio
       toRole: 'lead',
       toSessionId: 'session-lead',
     }),
-  ], [
+  ], [], [], [
     {
       sessionId: 'session-lead',
       running: true,
@@ -79,7 +79,7 @@ test('buildSnapshot groups every thread of one session pair into one conversatio
 test('buildSnapshot keeps role-only participants for an unbound destination', () => {
   const snapshot = buildSnapshot([
     message({ id: 'x', toRole: 'reviewer', toSessionId: undefined }),
-  ], [], 1)
+  ], [], [], [], 1)
   assert.equal(snapshot.conversations.length, 1)
   assert.deepEqual(snapshot.conversations[0].participants, [
     { role: 'lead', sessionId: 'session-lead' },
@@ -259,4 +259,74 @@ test('the history route pages a conversation twenty at a time', async t => {
   assert.equal(nextBody.messages.length, 5)
   assert.equal(nextBody.hasMore, false)
   assert.equal(nextBody.messages[0].id, 'hist_00')
+})
+
+test('the snapshot and history routes expose a group conversation', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  store.createGroup({
+    id: 'grp_route',
+    name: 'frontend',
+    createdBySession: 'session-lead',
+    memberIds: ['session-lead', 'session-reviewer'],
+    now: 1_000_000,
+  })
+  for (let index = 0; index < 25; index++) {
+    store.insertGroupMessage({
+      id: `gmsg_${String(index).padStart(2, '0')}`,
+      groupId: 'grp_route',
+      fromRole: 'lead',
+      fromSessionId: 'session-lead',
+      content: `group body ${index}`,
+      kind: 'request',
+      threadId: 'group:grp_route',
+      createdAt: 1_000_000 + index,
+      priority: 'normal',
+      expiresAt: 86_400_000,
+      recipients: [{ sessionId: 'session-reviewer', role: 'direct' }],
+    })
+  }
+  const { routes } = fakeRoutes(store)
+  const snapshot = await routes.get(SNAPSHOT_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/snapshot?limit=50'))
+  const body = await snapshot.json()
+  assert.equal(body.totalMessages, 25)
+  const group = body.conversations.find(conversation => conversation.kind === 'group')
+  assert.ok(group)
+  assert.equal(group.title, 'frontend')
+  assert.equal(group.messages.length, 25)
+  assert.equal(group.members.length, 2)
+
+  const history = await routes.get(HISTORY_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/history?group=grp_route&limit=20'))
+  const page = await history.json()
+  assert.equal(page.messages.length, 20)
+  assert.equal(page.hasMore, true)
+  assert.equal(page.messages[0].id, 'gmsg_05')
+  assert.equal(page.messages[19].id, 'gmsg_24')
+  const next = await routes.get(HISTORY_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/history?group=grp_route&limit=20&before=1000005&beforeId=gmsg_05'))
+  const nextPage = await next.json()
+  assert.equal(nextPage.messages.length, 5)
+  assert.equal(nextPage.hasMore, false)
+})
+
+test('the send route broadcasts to a group', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  store.createGroup({
+    id: 'grp_send',
+    name: 'ops',
+    createdBySession: 'session-lead',
+    memberIds: ['session-lead', 'session-reviewer'],
+    now: 1_000_000,
+  })
+  const { routes } = fakeRoutes(store)
+  const response = await routes.get(SEND_PATH).fetch(new Request('http://127.0.0.1:1/api/session-bridge/send', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fromSessionId: 'session-lead', groupId: 'grp_send', text: 'hello group' }),
+  }))
+  assert.equal(response.status, 201)
+  const body = await response.json()
+  assert.equal(body.recipients, 1)
+  assert.equal(store.getGroupMessage(body.groupMessageId).content, 'hello group')
+  assert.equal(store.groupDeliveryStatus(body.groupMessageId).length, 1)
 })
