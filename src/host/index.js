@@ -14,6 +14,7 @@ import { resolveConfig } from './config.js'
 import { DeliveryWorker } from './delivery.js'
 import { BridgePolicy } from './policy.js'
 import { BridgeStore } from './store.js'
+import { registerBridgeRoutes } from './routes.js'
 import { PROMPT_TEXT, registerTools } from './tools.js'
 
 /** Cordis plugin name used by Loader diagnostics. */
@@ -33,6 +34,11 @@ export function apply(ctx, rawConfig) {
   try {
     const policy = new BridgePolicy(config, store)
     const worker = new DeliveryWorker({ ctx, config, store, policy })
+    // The snapshot route is only meaningful with a Web connection; profiles
+    // without one keep the tools and delivery worker running.
+    ctx.inject(['connection'], connectionCtx => {
+      registerBridgeRoutes(connectionCtx, { store })
+    })
     ctx.effect(() => {
       const disposeTools = registerTools(ctx, { store, policy, worker, config })
       const disposePrompt = ctx.systemPrompt.section({

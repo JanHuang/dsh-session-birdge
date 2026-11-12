@@ -157,3 +157,17 @@ test('seeded helper produces a readable message', t => {
   const message = seedMessage({ config: {}, store, clock: { now: () => 1_000_000 } })
   assert.equal(store.getMessage(message.id).toRole, 'reviewer')
 })
+
+
+test('recent messages return the newest window in chronological order', t => {
+  const store = freshStore(t)
+  for (let index = 0; index < 5; index++) {
+    store.insertMessage(base({
+      id: `m${index}`,
+      createdAt: 1_000_000 + index,
+      threadId: `thr-${index}`,
+    }))
+  }
+  assert.deepEqual(store.recentMessages(2).map(message => message.id), ['m3', 'm4'])
+  assert.deepEqual(store.recentMessages(10).map(message => message.id), ['m0', 'm1', 'm2', 'm3', 'm4'])
+})

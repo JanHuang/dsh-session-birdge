@@ -13,7 +13,11 @@
 >   `session_roles`（查看角色/权限）；`session_list` 已实现。
 > - 投递幂等：`sessionController.prompt` 的 `requestId` 直接使用 `messageId`，
 >   目标 Agent 对重复 prompt 去重。
-> - M6（可选 Client 消息面板）未实现；v0.1 交付 Host 工具与投递链路。
+> - M6 Client 消息面板已实现（v0.2）：在会话 View 行「轨迹」之后注册
+>   「会话桥」标签，左侧列全部 bridge 对话、右侧以聊天窗展示消息，
+>   每 5 秒刷新；数据由 Host 的只读快照路由
+>   `/api/session-bridge/snapshot` 提供（受 Web 连接 owner 防火墙保护）。
+>   面板只读，发送/回复仍走工具。
 > - 审计表只记录路由与状态，不记录消息正文。
 > - 实测发现 Host 的 Session 控制面把 `origin: subagent` 的子会话保留给
 >   subagent routing（`session/agent-busy`），因此桥接只面向独立顶层会话：

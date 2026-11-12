@@ -386,6 +386,20 @@ export class BridgeStore {
   }
 
   /**
+   * The newest messages across every thread, oldest first.
+   * @param {number} limit
+   * @returns {import('./types.js').BridgeMessage[]}
+   */
+  recentMessages(limit) {
+    this.#assertOpen()
+    return this.#statement(`
+      SELECT * FROM (
+        SELECT * FROM messages ORDER BY created_at DESC LIMIT ?
+      ) ORDER BY created_at
+    `).all(limit).map(rowToMessage)
+  }
+
+  /**
    * @param {string} sessionId
    * @returns {number}
    */

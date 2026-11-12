@@ -75,6 +75,20 @@ is resumed through its own preset, and an unbound role waits until a session
 binds it. Nothing is lost if the Host restarts; the user message carries the
 prompt request id, so a re-delivered prompt is accepted once.
 
+## Bridge view
+
+The bundle ships a Client half. After the page loads the plugin, a **Bridge**
+tab (`会话桥`) appears in the conversation View row after **Trajectory**
+(`轨迹`). It lists every bridge conversation in this profile — participants,
+last message, and time — and renders the selected thread as a chat window with
+sender, role, kind, priority, and delivery status. It refreshes every 5 seconds
+and has a manual **Refresh** button. The view is read-only: send and reply from
+the tools.
+
+The view reads `/api/session-bridge/snapshot` served by the Host inside the
+Web connection's owner firewall. Open a new chat and use the tools to change
+anything; the panel is a viewer.
+
 ## Tools
 
 | Tool | Purpose |
@@ -219,6 +233,11 @@ ELECTRON_RUN_AS_NODE=1 "$DSH_NODE_EXECUTABLE" --test tests/*.test.mjs
 - `session_ask` occupies the calling turn while it waits; the target must be
   idle or finish its current turn within the timeout. Use `session_send` for
   fire-and-forget work.
+- The Bridge view is served by the Host's authenticated Web connection. A
+  headless profile without a Web connection keeps the tools and delivery
+  worker, but has no panel.
+- After a bundle update, refresh the browser page once to load the new Client
+  half; the Host half reloads with the plugin row.
 - Subagent sessions are not bridge targets. The Host's Session controller
   reserves them for subagent routing (`session/agent-busy`), so `session_bind`
   rejects them and a stale binding fails with an explanation instead of
