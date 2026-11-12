@@ -1,0 +1,11 @@
+# Bundle patch for dsh-session-bridge.
+#
+# The row loads this package's Host entry (`src/host/index.js`) as a plain
+# Cordis plugin. All configuration is optional and defaults apply when a field
+# is omitted; see README.md for the complete reference. Role bindings are
+# created at runtime with the `session_bind` tool, so no session ids belong in
+# this file.
+- insert:
+    - id: session-bridge
+      name: dsh-session-bridge
+      config: {}

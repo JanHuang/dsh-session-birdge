@@ -1,0 +1,46 @@
+{
+  "name": "dsh-session-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Asynchronous, durable message bridge between independent DeepSeek Harness sessions.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": ">=0.2.0"
+  },
+  "main": "src/host/index.js",
+  "exports": {
+    ".": "./src/host/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "src",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "SPEC.md",
+    "tsconfig.json"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "session",
+    "bridge",
+    "messaging"
+  ],
+  "license": "MIT"
+}
