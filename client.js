@@ -112,6 +112,21 @@ body[data-ds-dark-theme] .dsb-root {
   --dsb-scroll:#4E4E52; --dsb-scroll-hover:#63636A;
 }
 .dsb-root *, .dsb-root *::before, .dsb-root *::after { box-sizing:border-box; }
+/* The host renders a View inside a slot boundary inside the conversation view
+   area. Both keep auto heights in the active phase, so a 100%-height root
+   would otherwise grow with its messages and never scroll internally. Constrain
+   just those two wrappers while this view is mounted. */
+*:has(> .dsb-root) {
+  flex:1 1 0 !important;
+  min-height:0 !important;
+  overflow:hidden !important;
+}
+*:has(> *:has(> .dsb-root)) {
+  flex:1 1 0 !important;
+  min-height:0 !important;
+  height:100% !important;
+  overflow:hidden !important;
+}
 .dsb-topbar { height:56px; flex:0 0 56px; display:flex; align-items:center; gap:12px; padding:0 4px; }
 .dsb-brand { font-size:16px; font-weight:600; letter-spacing:.01em; }
 .dsb-top-actions { margin-left:auto; display:flex; align-items:center; gap:12px; }
