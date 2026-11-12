@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import test from 'node:test'
-import { buildSnapshot, EVENTS_PATH, registerBridgeRoutes, SEND_PATH, SNAPSHOT_PATH } from '../src/host/routes.js'
+import { buildSnapshot, EVENTS_PATH, HISTORY_PATH, registerBridgeRoutes, SEND_PATH, SNAPSHOT_PATH } from '../src/host/routes.js'
 import { BridgeStore } from '../src/host/store.js'
 import { seedMessage, tempDirectory } from './helpers.mjs'
 
@@ -229,4 +229,33 @@ test('the send route rejects invalid requests', async t => {
   assert.equal((await send({ fromSessionId: 'session-lead', toSessionId: 'session-lead', text: 'x' })).status, 400)
   assert.equal((await send({ fromSessionId: 'session-lead', toSessionId: 'session-reviewer', text: '   ' })).status, 400)
   assert.equal((await send({ fromSessionId: 'session-lead', toSessionId: 'missing', text: 'x' })).status, 404)
+})
+
+
+test('the history route pages a conversation twenty at a time', async t => {
+  const store = new BridgeStore(path.join(tempDirectory(t), 'routes.db'))
+  t.after(() => store.close())
+  for (let index = 0; index < 25; index++) {
+    seedMessage({ store, clock: { now: () => 1_000_000 + index } }, {
+      id: `hist_${String(index).padStart(2, '0')}`,
+      createdAt: 1_000_000 + index,
+    })
+  }
+  const { routes } = fakeRoutes(store)
+  const route = routes.get(HISTORY_PATH)
+  assert.deepEqual(route.methods, ['GET'])
+
+  const response = await route.fetch(new Request('http://127.0.0.1:1/api/session-bridge/history?a=session-impl&b=session-reviewer&limit=20'))
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.messages.length, 20)
+  assert.equal(body.hasMore, true)
+  assert.equal(body.messages[0].id, 'hist_05')
+  assert.equal(body.messages[19].id, 'hist_24')
+
+  const next = await route.fetch(new Request('http://127.0.0.1:1/api/session-bridge/history?a=session-impl&b=session-reviewer&limit=20&before=1000005&beforeId=hist_05'))
+  const nextBody = await next.json()
+  assert.equal(nextBody.messages.length, 5)
+  assert.equal(nextBody.hasMore, false)
+  assert.equal(nextBody.messages[0].id, 'hist_00')
 })

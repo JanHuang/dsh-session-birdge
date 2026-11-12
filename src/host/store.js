@@ -428,6 +428,36 @@ export class BridgeStore {
   }
 
   /**
+   * Page one conversation before a cursor, newest first internally and
+   * returned oldest first for prepending.
+   * @param {string} sessionA
+   * @param {string} sessionB
+   * @param {number | undefined} before - cursor created_at; omit for the latest page.
+   * @param {string} beforeId - tiebreaker for equal timestamps.
+   * @param {number} limit
+   * @returns {{ messages: import('./types.js').BridgeMessage[], hasMore: boolean }}
+   */
+  messagesBefore(sessionA, sessionB, before, beforeId, limit) {
+    this.#assertOpen()
+    const pair = '((from_session_id = ? AND to_session_id = ?) OR (from_session_id = ? AND to_session_id = ?))'
+    const rows = before === undefined
+      ? this.#statement(`
+          SELECT * FROM messages WHERE ${pair}
+          ORDER BY created_at DESC, id DESC LIMIT ?
+        `).all(sessionA, sessionB, sessionB, sessionA, limit + 1)
+      : this.#statement(`
+          SELECT * FROM messages
+          WHERE (created_at < ? OR (created_at = ? AND id < ?)) AND ${pair}
+          ORDER BY created_at DESC, id DESC LIMIT ?
+        `).all(before, before, beforeId, sessionA, sessionB, sessionB, sessionA, limit + 1)
+    const hasMore = rows.length > limit
+    return {
+      messages: rows.slice(0, limit).reverse().map(rowToMessage),
+      hasMore,
+    }
+  }
+
+  /**
    * The newest messages across every thread, oldest first.
    * @param {number} limit
    * @returns {import('./types.js').BridgeMessage[]}

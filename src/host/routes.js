@@ -26,6 +26,9 @@ export const EVENTS_PATH = '/api/session-bridge/events'
 /** Composer send route used by the client bundle. */
 export const SEND_PATH = '/api/session-bridge/send'
 
+/** Paged conversation history used by the client bundle. */
+export const HISTORY_PATH = '/api/session-bridge/history'
+
 /** Default and maximum messages returned in one snapshot. */
 const DEFAULT_LIMIT = 300
 const MAX_LIMIT = 500
@@ -63,7 +66,14 @@ export function registerBridgeRoutes(ctx, deps) {
       requestBody: 'buffered',
       fetch: request => handleSend(ctx, deps, request),
     })
+    const disposeHistory = ctx.connection.fetch.register({
+      path: HISTORY_PATH,
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: request => handleHistory(deps.store, request),
+    })
     return async () => {
+      await disposeHistory()
       await disposeSend()
       await disposeEvents()
       await disposeSnapshot()
@@ -88,6 +98,33 @@ async function handleSnapshot(ctx, store, request) {
   const messages = store.recentMessages(limit)
   const items = await listSessions(ctx, request.signal)
   return Response.json({ ...buildSnapshot(messages, items, Date.now()), version: store.version }, {
+    headers: { 'cache-control': 'no-store' },
+  })
+}
+
+/**
+ * Page one conversation's history, newest page first.
+ * @param {import('./store.js').BridgeStore} store
+ * @param {Request} request
+ * @returns {Response}
+ */
+function handleHistory(store, request) {
+  const url = new URL(request.url)
+  const sessionA = url.searchParams.get('a') ?? ''
+  const sessionB = url.searchParams.get('b') ?? ''
+  const limitRaw = Number(url.searchParams.get('limit') ?? '20')
+  const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, Math.trunc(limitRaw))) : 20
+  const beforeRaw = url.searchParams.get('before')
+  const before = beforeRaw === null ? undefined : Number(beforeRaw)
+  const beforeId = url.searchParams.get('beforeId') ?? ''
+  if (sessionA === '' || sessionB === '' || sessionA === sessionB) {
+    return Response.json({ error: 'a and b are required distinct session ids' }, { status: 400 })
+  }
+  if (before !== undefined && (!Number.isFinite(before) || beforeId === '')) {
+    return Response.json({ error: 'before and beforeId must be supplied together' }, { status: 400 })
+  }
+  const page = store.messagesBefore(sessionA, sessionB, before, beforeId, limit)
+  return Response.json({ messages: page.messages.map(publicMessage), hasMore: page.hasMore }, {
     headers: { 'cache-control': 'no-store' },
   })
 }

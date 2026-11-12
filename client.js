@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
     const SNAPSHOT_URL = '/api/session-bridge/snapshot?limit=500'
     const EVENTS_URL = '/api/session-bridge/events'
     const SEND_URL = '/api/session-bridge/send'
+    const HISTORY_URL = '/api/session-bridge/history'
 
     const zh = {
       'view.bridge': '会话桥',
@@ -42,10 +43,12 @@ window.__ModuleLoader__.load({
       'kind.control': '控制',
       'day.today': '今天',
       'day.yesterday': '昨天',
-      'history.older': '更早的消息',
-      'history.collapse': '收起更早的消息',
+      'history.more': '上拉加载更早消息 · 20 条',
+      'history.loading': '正在加载更早的消息…',
+      'history.none': '没有更早的消息了',
+      'history.failed': '历史加载失败，点击重试',
       'history.emptyToday': '今天还没有新消息',
-      'history.hint': '展开更早的消息查看历史沟通。',
+      'history.hint': '上拉加载更早的消息查看历史沟通。',
       'copy': '复制代码',
       'send.placeholder': '输入消息，Enter 发送…',
       'send.blocked': '当前会话不在此对话中',
@@ -76,10 +79,12 @@ window.__ModuleLoader__.load({
       'kind.control': 'control',
       'day.today': 'Today',
       'day.yesterday': 'Yesterday',
-      'history.older': 'Earlier messages',
-      'history.collapse': 'Hide earlier messages',
+      'history.more': 'Pull up to load 20 more',
+      'history.loading': 'Loading earlier messages…',
+      'history.none': 'No earlier messages',
+      'history.failed': 'Could not load history; click to retry',
       'history.emptyToday': 'No messages today yet',
-      'history.hint': 'Expand earlier messages to read the history.',
+      'history.hint': 'Pull up to load earlier messages.',
       'copy': 'Copy code',
       'send.placeholder': 'Type a message, Enter to send…',
       'send.blocked': 'Current session is not in this conversation',
@@ -136,6 +141,7 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-date { align-self:center; margin:2px 0 4px; padding:2px 10px; border-radius:999px; background:var(--dsb-lead); color:var(--dsb-muted); font-size:12px; line-height:18px; }
 .dsb-history { position:sticky; top:0; z-index:2; align-self:center; display:inline-flex; align-items:center; gap:6px; margin:0 0 4px; padding:3px 12px; border:1px dashed var(--dsb-line); border-radius:999px; background:var(--dsb-chat); color:var(--dsb-muted); font-size:12px; line-height:18px; cursor:pointer; }
 .dsb-history:hover { color:var(--dsb-text); }
+.dsb-history:disabled { cursor:default; opacity:.75; }
 .dsb-card { width:78%; max-width:860px; align-self:flex-start; border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:10px; }
 .dsb-card[data-side="right"] { align-self:flex-end; }
 .dsb-card[data-variant="lead"] { background:var(--dsb-lead); color:var(--dsb-text); --dsb-card-muted:var(--dsb-muted); --dsb-card-tag-bg:var(--dsb-tag-bg); --dsb-card-tag-text:var(--dsb-muted); --dsb-card-dot:var(--dsb-muted); }
@@ -269,13 +275,16 @@ body[data-ds-dark-theme] .dsb-root {
       const [refreshing, setRefreshing] = useState(false)
       const [connection, setConnection] = useState('connecting')
       const [selectedId, setSelectedId] = useState(null)
-      const [expandedHistory, setExpandedHistory] = useState(false)
+      const [history, setHistory] = useState({})
+      const [historyError, setHistoryError] = useState(null)
       const [draft, setDraft] = useState('')
       const [sending, setSending] = useState(false)
       const [sendError, setSendError] = useState(null)
       const mounted = useRef(true)
       const hasData = useRef(false)
       const messagesRef = useRef(null)
+      const loadingConversations = useRef(new Set())
+      const autoLoaded = useRef(new Set())
 
       const load = useCallback(async () => {
         setRefreshing(true)
@@ -395,9 +404,25 @@ body[data-ds-dark-theme] .dsb-root {
 
       const todayStart = new Date()
       todayStart.setHours(0, 0, 0, 0)
-      const olderMessages = active === undefined ? [] : active.messages.filter(message => message.createdAt < todayStart.getTime())
       const todayMessages = active === undefined ? [] : active.messages.filter(message => message.createdAt >= todayStart.getTime())
-      const visibleMessages = expandedHistory ? (active?.messages ?? []) : todayMessages
+      const activeHistory = active === undefined
+        ? null
+        : (history[active.id] ?? { messages: [], hasMore: true, loading: false })
+      const historyMessages = activeHistory?.messages ?? []
+      const seen = new Set()
+      const visibleMessages = []
+      for (const message of [...historyMessages, ...todayMessages]) {
+        if (seen.has(message.id)) continue
+        seen.add(message.id)
+        visibleMessages.push(message)
+      }
+      visibleMessages.sort((left, right) => left.createdAt - right.createdAt
+        || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      const historySessions = active === undefined
+        ? []
+        : active.participants.map(participant => participant.sessionId).filter(sessionId => typeof sessionId === 'string' && sessionId !== '')
+      const canPageHistory = active !== undefined && historySessions.length === 2
+      const hasMoreHistory = canPageHistory && (activeHistory?.hasMore ?? true)
       const peer = active === undefined ? null : peerOf(active)
       const canSend = active !== undefined
         && peer !== null
@@ -408,13 +433,13 @@ body[data-ds-dark-theme] .dsb-root {
       useEffect(() => {
         const node = messagesRef.current
         if (node !== null) node.scrollTop = node.scrollHeight
-      }, [active?.id, expandedHistory, active?.messages?.length])
+      }, [active?.id, active?.messages?.length])
 
       const selectConversation = id => {
         if (id === selectedId) return
         setSelectedId(id)
-        setExpandedHistory(false)
         setSendError(null)
+        setHistoryError(null)
       }
       const copyCode = async code => {
         try {
@@ -433,6 +458,82 @@ body[data-ds-dark-theme] .dsb-root {
         const pad = number => String(number).padStart(2, '0')
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
       }
+
+      const loadHistory = async () => {
+        if (active === undefined || !canPageHistory) return
+        const activeId = active.id
+        if (loadingConversations.current.has(activeId)) return
+        const entry = history[activeId] ?? { messages: [], hasMore: true, loading: false }
+        if (!entry.hasMore) return
+        loadingConversations.current.add(activeId)
+        const oldest = visibleMessages[0]
+        const params = new URLSearchParams({
+          a: historySessions[0],
+          b: historySessions[1],
+          limit: '20',
+        })
+        if (oldest !== undefined) {
+          params.set('before', String(oldest.createdAt))
+          params.set('beforeId', oldest.id)
+        }
+        const box = messagesRef.current
+        const previousHeight = box?.scrollHeight ?? 0
+        const previousTop = box?.scrollTop ?? 0
+        setHistory(previous => ({
+          ...previous,
+          [activeId]: { ...(previous[activeId] ?? { messages: [], hasMore: true }), loading: true },
+        }))
+        setHistoryError(null)
+        try {
+          const response = await fetch(`${HISTORY_URL}?${params.toString()}`, {
+            headers: { accept: 'application/json' },
+            cache: 'no-store',
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          const data = await response.json()
+          if (!mounted.current) return
+          const incoming = Array.isArray(data.messages) ? data.messages : []
+          setHistory(previous => {
+            const current = previous[activeId] ?? { messages: [], hasMore: true, loading: false }
+            const known = new Set(current.messages.map(message => message.id))
+            const added = incoming.filter(message => !known.has(message.id))
+            return {
+              ...previous,
+              [activeId]: {
+                messages: [...added, ...current.messages],
+                hasMore: data.hasMore === true,
+                loading: false,
+              },
+            }
+          })
+          requestAnimationFrame(() => {
+            const node = messagesRef.current
+            if (node !== null) node.scrollTop = previousTop + (node.scrollHeight - previousHeight)
+          })
+        } catch (failure) {
+          if (!mounted.current) return
+          setHistory(previous => ({
+            ...previous,
+            [activeId]: { ...(previous[activeId] ?? { messages: [], hasMore: true }), loading: false },
+          }))
+          setHistoryError(failure instanceof Error ? failure.message : String(failure))
+        } finally {
+          loadingConversations.current.delete(activeId)
+        }
+      }
+      const handleMessagesScroll = event => {
+        if (event.currentTarget.scrollTop > 24) return
+        if (hasMoreHistory) void loadHistory()
+      }
+
+      useEffect(() => {
+        if (active === undefined) return
+        if (todayMessages.length > 0) return
+        if (!canPageHistory) return
+        if (autoLoaded.current.has(active.id)) return
+        autoLoaded.current.add(active.id)
+        void loadHistory()
+      }, [active?.id, todayMessages.length, canPageHistory])
 
       const submit = async event => {
         event.preventDefault()
@@ -545,19 +646,28 @@ body[data-ds-dark-theme] .dsb-root {
           `${active.messages.length} ${translate('count.messages', 'messages')}`,
         ].filter(part => part !== null).join(' · ')
 
-        const historyBar = olderMessages.length === 0
-          ? null
-          : h('button', {
+        const historyBar = canPageHistory && (hasMoreHistory || historyMessages.length > 0)
+          ? h('button', {
             type: 'button',
             className: 'dsb-history',
-            onClick: () => setExpandedHistory(value => !value),
+            disabled: (activeHistory?.loading ?? false) || !hasMoreHistory,
+            onClick: () => { void loadHistory() },
           },
-            h('span', null, `${expandedHistory
-              ? translate('history.collapse', 'Hide earlier messages')
-              : translate('history.older', 'Earlier messages')} · ${olderMessages.length}`),
-            h('span', null, expandedHistory ? '▴' : '▾'),
+            h('span', null, activeHistory?.loading
+              ? translate('history.loading', 'Loading earlier messages…')
+              : historyError !== null
+                ? translate('history.failed', 'Could not load history; click to retry')
+                : hasMoreHistory
+                  ? translate('history.more', 'Pull up to load 20 more')
+                  : translate('history.none', 'No earlier messages')),
+            hasMoreHistory && !(activeHistory?.loading ?? false) ? h('span', null, '▴') : null,
           )
+          : null
 
+        const outboundSession = currentSessionId !== null
+          && active.participants.some(participant => participant.sessionId === currentSessionId)
+          ? currentSessionId
+          : active.messages[0]?.fromSessionId
         const rendered = []
         let lastDay = null
         for (const message of visibleMessages) {
@@ -598,7 +708,7 @@ body[data-ds-dark-theme] .dsb-root {
             key: message.id,
             className: 'dsb-card',
             'data-variant': variant,
-            'data-side': variant === 'bridge' ? 'right' : 'left',
+            'data-side': message.fromSessionId === outboundSession ? 'right' : 'left',
           },
             h('header', { className: 'dsb-card-head' },
               h('span', { className: 'dsb-sender' },
@@ -626,7 +736,7 @@ body[data-ds-dark-theme] .dsb-root {
             h('div', { className: 'dsb-chat-title' }, chatLabel),
             h('div', { className: 'dsb-chat-sub' }, chatSubtitle),
           ),
-          h('div', { className: 'dsb-messages', ref: messagesRef },
+          h('div', { className: 'dsb-messages', ref: messagesRef, onScroll: handleMessagesScroll },
             historyBar,
             visibleMessages.length === 0
               ? h('div', { className: 'dsb-center' },

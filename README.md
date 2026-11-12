@@ -85,16 +85,20 @@ light/dark theme. The layout is a fixed sidebar plus a chat panel:
   dividers, borders, or separators. Default, hover, and selected states use
   `#FFFFFF`/`#F2F3F5`/`#E7EDFF` in light and `#232324`/`#2E2E30`/`#253557` in
   dark.
-- The right messages area scrolls independently; the composer stays pinned at
-  the bottom. One card is one session pair, so every thread and historical
-  message between that pair lives in the same chat, not a new card per thread.
+- The right messages area scrolls independently; the chat header stays fixed
+  above it and the composer stays pinned at the bottom. One card is one session
+  pair, so every thread and historical message between that pair lives in the
+  same chat, not a new card per thread.
 - Messages are stream cards aligned by sender rather than WeChat-style bubbles:
-  Lead cards sit left on the neutral surface; Bridge cards sit right and always
-  use `#165DFF` with white text. Each card carries the sender, a request/reply
-  tag, the message body, a `#thread` id, a time, and any fenced PHP block as a
-  dark code block with a copy action.
-- Today's messages are visible by default; older history stays behind an
-  **Earlier messages** control. A centered date divider separates days.
+  the current session's cards sit right and the peer's cards sit left. Lead
+  requests use the neutral surface; Bridge replies always use `#165DFF` with
+  white text. Each card carries the sender, a request/reply tag, the message
+  body, a `#thread` id, a time, and any fenced PHP block as a dark code block
+  with a copy action.
+- Today's messages are visible by default. Scrolling to the top of the message
+  area — or clicking the pull-up bar — loads **20 older messages per request**
+  until history is exhausted; an empty today loads the latest page
+  automatically. A centered date divider separates days.
 - New messages arrive over an authenticated server-sent event stream and append
   automatically; there is no polling. A manual refresh performs a hard resync.
 - The composer queues a request for the selected peer. It is disabled when the

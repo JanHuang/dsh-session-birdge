@@ -188,3 +188,37 @@ test('committed message changes advance the store version', t => {
   assert.equal(store.version, 3)
   assert.deepEqual(versions, [1, 2])
 })
+
+
+test('conversation history pages newest-first and returns pages oldest-first', t => {
+  const store = freshStore(t)
+  for (let index = 0; index < 5; index++) {
+    store.insertMessage(base({
+      id: `h${index}`,
+      createdAt: 1_000_000 + index,
+      fromSessionId: 'session-a',
+      toSessionId: 'session-b',
+      toRole: 'impl',
+    }))
+  }
+  store.insertMessage(base({
+    id: 'other',
+    createdAt: 1_000_003,
+    fromSessionId: 'session-x',
+    toSessionId: 'session-y',
+  }))
+
+  const latest = store.messagesBefore('session-a', 'session-b', undefined, '', 2)
+  assert.deepEqual(latest.messages.map(message => message.id), ['h3', 'h4'])
+  assert.equal(latest.hasMore, true)
+
+  const oldest = latest.messages[0]
+  const earlier = store.messagesBefore('session-a', 'session-b', oldest.createdAt, oldest.id, 2)
+  assert.deepEqual(earlier.messages.map(message => message.id), ['h1', 'h2'])
+  assert.equal(earlier.hasMore, true)
+
+  const first = earlier.messages[0]
+  const rest = store.messagesBefore('session-a', 'session-b', first.createdAt, first.id, 2)
+  assert.deepEqual(rest.messages.map(message => message.id), ['h0'])
+  assert.equal(rest.hasMore, false)
+})

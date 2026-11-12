@@ -14,13 +14,14 @@
 > - 投递幂等：`sessionController.prompt` 的 `requestId` 直接使用 `messageId`，
 >   目标 Agent 对重复 prompt 去重。
 > - M6 Client 消息面板已实现（v0.2）：在会话 View 行「轨迹」之后注册
->   「会话桥」标签：同一对会话的所有线程合并为一个聊天窗，左侧列表独立
->   滚动、右侧消息区独立滚动，底部输入栏固定；默认显示当天并折叠更早历史；
->   新消息通过 `/api/session-bridge/events`（SSE）实时追加，不做定时轮询。
->   消息为流式卡片并按发送方分侧：Lead 在左、Bridge 在右；Lead 用中性底色，
->   Bridge 回复固定 #165DFF 白字；代码块深色并带复制；列表与消息区各自独立
->   滚动，顶部栏与底部输入栏固定；面板跟随宿主 `body[data-ds-dark-theme]`
->   切换浅/深色。
+>   「会话桥」标签：同一对会话的所有线程合并为一个聊天窗；左侧会话列表
+>   超高时独立滚动，右侧聊天头部与底部输入栏固定，仅消息区滚动；默认显示
+>   当天，滚动到顶部或点击上拉条时通过 `/api/session-bridge/history`
+>   每次加载 20 条更早消息，当天为空时自动加载最新一页。
+>   消息为流式卡片：接收方在左、发送方在右；Lead 请求用中性底色，Bridge
+>   回复固定 #165DFF 白字；代码块深色并带复制；面板跟随宿主
+>   `body[data-ds-dark-theme]` 切换浅/深色。新消息通过
+>   `/api/session-bridge/events`（SSE）实时追加，不做定时轮询。
 >   底部输入栏通过 `/api/session-bridge/send` 排队请求；数据路由受 Web 连接
 >   owner 防火墙保护。
 > - 审计表只记录路由与状态，不记录消息正文。
