@@ -56,25 +56,30 @@ async function handleSnapshot(ctx, store, request) {
 }
 
 /**
- * Group messages by thread and attach display metadata for each session.
+ * Group messages by session pair and attach display metadata for each session.
+ *
+ * One conversation is one pair of sessions. Several threads between the same
+ * pair are messages of the same chat, not separate chats.
  * @param {import('./types.js').BridgeMessage[]} messages - oldest first.
  * @param {any[]} sessions - `sessionController.list` items.
  * @param {number} now
  * @returns {object}
  */
 export function buildSnapshot(messages, sessions, now) {
-  /** @type {Map<string, { id: string, updatedAt: number, participants: Map<string, { role: string, sessionId: string | undefined }>, messages: any[] }>} */
-  const threads = new Map()
+  /** @type {Map<string, { id: string, updatedAt: number, participants: Map<string, { role: string, sessionId: string | undefined }>, threadIds: Set<string>, messages: any[] }>} */
+  const conversations = new Map()
   for (const message of messages) {
-    let thread = threads.get(message.threadId)
-    if (thread === undefined) {
-      thread = { id: message.threadId, updatedAt: 0, participants: new Map(), messages: [] }
-      threads.set(message.threadId, thread)
+    const id = pairKey(message)
+    let conversation = conversations.get(id)
+    if (conversation === undefined) {
+      conversation = { id, updatedAt: 0, participants: new Map(), threadIds: new Set(), messages: [] }
+      conversations.set(id, conversation)
     }
-    thread.messages.push(publicMessage(message))
-    thread.updatedAt = Math.max(thread.updatedAt, message.createdAt)
-    addParticipant(thread.participants, message.fromRole, message.fromSessionId)
-    addParticipant(thread.participants, message.toRole, message.toSessionId)
+    conversation.messages.push(publicMessage(message))
+    conversation.updatedAt = Math.max(conversation.updatedAt, message.createdAt)
+    conversation.threadIds.add(message.threadId)
+    setParticipant(conversation.participants, message.fromRole, message.fromSessionId)
+    setParticipant(conversation.participants, message.toRole, message.toSessionId)
   }
   const sessionMap = {}
   for (const item of sessions) {
@@ -89,12 +94,13 @@ export function buildSnapshot(messages, sessions, now) {
   return {
     generatedAt: now,
     totalMessages: messages.length,
-    threads: [...threads.values()]
-      .map(thread => ({
-        id: thread.id,
-        updatedAt: thread.updatedAt,
-        participants: [...thread.participants.values()],
-        messages: thread.messages,
+    conversations: [...conversations.values()]
+      .map(conversation => ({
+        id: conversation.id,
+        updatedAt: conversation.updatedAt,
+        participants: [...conversation.participants.values()],
+        threadIds: [...conversation.threadIds],
+        messages: conversation.messages,
       }))
       .sort((left, right) => right.updatedAt - left.updatedAt),
     sessions: sessionMap,
@@ -102,13 +108,25 @@ export function buildSnapshot(messages, sessions, now) {
 }
 
 /**
+ * Stable unordered identity for the two sides of one message.
+ * @param {import('./types.js').BridgeMessage} message
+ * @returns {string}
+ */
+function pairKey(message) {
+  const from = message.fromSessionId === undefined ? `role:${message.fromRole}` : message.fromSessionId
+  const to = message.toSessionId === undefined ? `role:${message.toRole}` : message.toSessionId
+  return from <= to ? `${from}|${to}` : `${to}|${from}`
+}
+
+/**
+ * Keep one entry per side, with the role from the latest message.
  * @param {Map<string, { role: string, sessionId: string | undefined }>} participants
  * @param {string} role
  * @param {string | undefined} sessionId
  */
-function addParticipant(participants, role, sessionId) {
+function setParticipant(participants, role, sessionId) {
   const key = sessionId === undefined ? `role:${role}` : sessionId
-  if (!participants.has(key)) participants.set(key, { role, sessionId })
+  participants.set(key, { role, sessionId })
 }
 
 /**

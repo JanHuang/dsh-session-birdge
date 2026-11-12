@@ -23,7 +23,7 @@ function message(overrides) {
   }
 }
 
-test('buildSnapshot groups threads, dedupes participants, and labels sessions', () => {
+test('buildSnapshot groups every thread of one session pair into one conversation', () => {
   const snapshot = buildSnapshot([
     message({ id: 'a', createdAt: 10 }),
     message({
@@ -37,6 +37,15 @@ test('buildSnapshot groups threads, dedupes participants, and labels sessions', 
       kind: 'reply',
     }),
     message({ id: 'c', createdAt: 30 }),
+    message({
+      id: 'd',
+      createdAt: 40,
+      threadId: 'thr_3',
+      fromRole: 'reviewer',
+      fromSessionId: 'session-reviewer',
+      toRole: 'lead',
+      toSessionId: 'session-lead',
+    }),
   ], [
     {
       sessionId: 'session-lead',
@@ -45,14 +54,19 @@ test('buildSnapshot groups threads, dedupes participants, and labels sessions', 
       projections: { values: { title: 'Lead session' } },
     },
     { sessionId: 'session-target', cwd: '/target' },
+    { sessionId: 'session-reviewer' },
   ], 1_234)
 
   assert.equal(snapshot.generatedAt, 1_234)
-  assert.equal(snapshot.totalMessages, 3)
-  assert.deepEqual(snapshot.threads.map(thread => thread.id), ['thr_1', 'thr_2'])
-  const first = snapshot.threads[0]
-  assert.deepEqual(first.messages.map(entry => entry.id), ['a', 'c'])
-  assert.deepEqual(first.participants, [
+  assert.equal(snapshot.totalMessages, 4)
+  assert.deepEqual(snapshot.conversations.map(conversation => conversation.id), [
+    'session-lead|session-reviewer',
+    'session-lead|session-target',
+  ])
+  const target = snapshot.conversations[1]
+  assert.deepEqual(target.messages.map(entry => entry.id), ['a', 'b', 'c'])
+  assert.deepEqual(target.threadIds, ['thr_1', 'thr_2'])
+  assert.deepEqual(target.participants, [
     { role: 'lead', sessionId: 'session-lead' },
     { role: 'direct', sessionId: 'session-target' },
   ])
@@ -65,7 +79,8 @@ test('buildSnapshot keeps role-only participants for an unbound destination', ()
   const snapshot = buildSnapshot([
     message({ id: 'x', toRole: 'reviewer', toSessionId: undefined }),
   ], [], 1)
-  assert.deepEqual(snapshot.threads[0].participants, [
+  assert.equal(snapshot.conversations.length, 1)
+  assert.deepEqual(snapshot.conversations[0].participants, [
     { role: 'lead', sessionId: 'session-lead' },
     { role: 'reviewer', sessionId: undefined },
   ])
@@ -101,6 +116,6 @@ test('the snapshot route reads messages and session labels', async t => {
   assert.equal(response.status, 200)
   const body = await response.json()
   assert.equal(body.totalMessages, 1)
-  assert.equal(body.threads[0].messages[0].id, 'msg_route')
+  assert.equal(body.conversations[0].messages[0].id, 'msg_route')
   assert.equal(body.sessions['session-reviewer'].title, 'Reviewer')
 })

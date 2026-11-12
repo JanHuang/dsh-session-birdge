@@ -79,11 +79,16 @@ prompt request id, so a re-delivered prompt is accepted once.
 
 The bundle ships a Client half. After the page loads the plugin, a **Bridge**
 tab (`会话桥`) appears in the conversation View row after **Trajectory**
-(`轨迹`). It lists every bridge conversation in this profile — participants,
-last message, and time — and renders the selected thread as a chat window with
-sender, role, kind, priority, and delivery status. It refreshes every 5 seconds
-and has a manual **Refresh** button. The view is read-only: send and reply from
-the tools.
+(`轨迹`). One card is one pair of sessions: every thread and historical message
+between that pair is merged into a single chat instead of one card per thread.
+The list shows participants, last message, and time, with conversations of the
+current session first. The chat shows sender, role, kind, priority, delivery
+status, and a thread tag when a pair used several threads.
+
+Today's messages are visible by default; older history stays collapsed behind
+an **Earlier messages** control. Long messages are shortened to a preview with
+an **Expand** action. The panel refreshes every 5 seconds and has a manual
+**Refresh** button. It is read-only: send and reply from the tools.
 
 The view reads `/api/session-bridge/snapshot` served by the Host inside the
 Web connection's owner firewall. Open a new chat and use the tools to change
