@@ -271,6 +271,17 @@ body[data-ds-dark-theme] .dsb-root {
       }
     }
 
+    /** Nearest scrolling ancestor of the view root. */
+    function findScrollAncestor(start) {
+      let node = start.parentElement
+      while (node !== null && node !== document.body) {
+        const style = getComputedStyle(node)
+        if (/(auto|scroll|overlay)/.test(style.overflowY) && node.clientHeight > 0) return node
+        node = node.parentElement
+      }
+      return null
+    }
+
     /** The tab component. */
     function BridgeView(props) {
       const translate = useCallback((key, fallback) => {
@@ -298,6 +309,8 @@ body[data-ds-dark-theme] .dsb-root {
       const mounted = useRef(true)
       const hasData = useRef(false)
       const messagesRef = useRef(null)
+      const rootRef = useRef(null)
+      const fitLayoutRef = useRef(() => {})
       const loadingConversations = useRef(new Set())
       const autoLoaded = useRef(new Set())
 
@@ -381,6 +394,102 @@ body[data-ds-dark-theme] .dsb-root {
           if (retryTimer !== null) clearTimeout(retryTimer)
         }
       }, [load])
+
+      useEffect(() => {
+        let frame = null
+        let observer = null
+        let mutation = null
+        let timer = null
+        const styled = new Map()
+        const setStyle = (element, property, value) => {
+          if (!styled.has(element)) styled.set(element, element.style.cssText)
+          element.style.setProperty(property, value)
+        }
+        const fit = () => {
+          const node = rootRef.current
+          if (node === null) return
+          const scroll = findScrollAncestor(node)
+          if (scroll === null) {
+            const height = Math.max(240, Math.round(window.innerHeight - node.getBoundingClientRect().top - 12))
+            node.style.height = `${height}px`
+            return
+          }
+          let view = node
+          while (view.parentElement !== null && view.parentElement !== scroll) view = view.parentElement
+          const chain = []
+          let current = node
+          while (current.parentElement !== null && current.parentElement !== scroll) {
+            chain.push(current.parentElement)
+            current = current.parentElement
+          }
+          for (const element of chain) {
+            setStyle(element, 'flex', '1 1 0')
+            setStyle(element, 'min-height', '0')
+            setStyle(element, 'height', '100%')
+            setStyle(element, 'overflow', 'hidden')
+          }
+          setStyle(view, 'flex', '1 1 0')
+          setStyle(view, 'min-height', '0')
+          setStyle(view, 'height', '100%')
+          setStyle(view, 'overflow', 'hidden')
+          setStyle(node, 'height', '100%')
+          if (node.clientHeight < 240) {
+            let below = 0
+            for (const sibling of scroll.children) {
+              if (sibling === view || sibling.contains(node)) continue
+              const style = getComputedStyle(sibling)
+              if (style.display === 'none' || style.visibility === 'hidden') continue
+              if (style.position === 'absolute' || style.position === 'fixed') continue
+              below += sibling.getBoundingClientRect().height
+            }
+            const paddingBottom = Number.parseFloat(getComputedStyle(scroll).paddingBottom) || 0
+            const available = scroll.clientHeight - below - paddingBottom
+            setStyle(node, 'height', `${Math.max(240, Math.round(available))}px`)
+          }
+        }
+        const schedule = () => {
+          if (frame !== null) return
+          frame = requestAnimationFrame(() => {
+            frame = null
+            fit()
+          })
+        }
+        fitLayoutRef.current = schedule
+        schedule()
+        window.addEventListener('resize', schedule)
+        const root = rootRef.current
+        const scroll = root === null ? null : findScrollAncestor(root)
+        if (scroll !== null && typeof ResizeObserver !== 'undefined') {
+          observer = new ResizeObserver(schedule)
+          observer.observe(scroll)
+          for (const sibling of scroll.children) {
+            if (root !== null && !sibling.contains(root)) {
+              try {
+                observer.observe(sibling)
+              } catch {
+                // A non-Element child cannot be observed.
+              }
+            }
+          }
+          mutation = new MutationObserver(schedule)
+          mutation.observe(scroll, { childList: true })
+        }
+        timer = setTimeout(schedule, 300)
+        return () => {
+          window.removeEventListener('resize', schedule)
+          if (frame !== null) cancelAnimationFrame(frame)
+          observer?.disconnect()
+          mutation?.disconnect()
+          if (timer !== null) clearTimeout(timer)
+          for (const [element, cssText] of styled) element.style.cssText = cssText
+          if (root !== null) root.style.height = ''
+          fitLayoutRef.current = () => {}
+        }
+      }, [])
+
+      useEffect(() => {
+        fitLayoutRef.current()
+      }, [loading, snapshot, selectedId])
 
       const conversations = Array.isArray(snapshot?.conversations) ? snapshot.conversations : []
       const sessions = snapshot?.sessions ?? {}
@@ -606,11 +715,11 @@ body[data-ds-dark-theme] .dsb-root {
       )
 
       if (loading && snapshot === null) {
-        return h('div', { className: 'dsb-root' }, h('style', null, CSS), header,
+        return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header,
           center(translate('loading', 'Reading bridge messages…'), null))
       }
       if (snapshot === null) {
-        return h('div', { className: 'dsb-root' }, h('style', null, CSS), header,
+        return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header,
           center(
             translate('error', 'Could not read bridge messages'),
             error ?? null,
@@ -619,7 +728,7 @@ body[data-ds-dark-theme] .dsb-root {
           ))
       }
       if (ordered.length === 0) {
-        return h('div', { className: 'dsb-root' }, h('style', null, CSS), header, errorStrip,
+        return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header, errorStrip,
           center(translate('empty.title', 'No bridge messages yet'),
             translate('empty.hint', 'Mention another session with @ and send a message; the conversation appears here.')))
       }
@@ -789,7 +898,7 @@ body[data-ds-dark-theme] .dsb-root {
         )
       }
 
-      return h('div', { className: 'dsb-root' }, h('style', null, CSS), header, errorStrip,
+      return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header, errorStrip,
         h('div', { className: 'dsb-main' }, list, chat))
     }
 
