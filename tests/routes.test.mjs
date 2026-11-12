@@ -72,6 +72,7 @@ test('buildSnapshot groups every thread of one session pair into one conversatio
   ])
   assert.equal(snapshot.sessions['session-lead'].title, 'Lead session')
   assert.equal(snapshot.sessions['session-lead'].running, true)
+  assert.equal(snapshot.sessions['session-lead'].cwd, '/work')
   assert.equal(snapshot.sessions['session-target'].title, undefined)
 })
 

@@ -359,6 +359,7 @@ export function buildSnapshot(messages, sessions, now) {
         ? { title: item.projections.values.title }
         : {}),
       running: item.running === true,
+      ...(typeof item.cwd === 'string' ? { cwd: item.cwd } : {}),
     }
   }
   return {

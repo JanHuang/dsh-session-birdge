@@ -28,7 +28,7 @@ test('the client bundle registers one named View after Trajectory', () => {
     throw new Error(`unexpected require ${specifier}`)
   })
   assert.equal(plugin.name, 'session-bridge')
-  assert.equal(plugin.inject.join(','), 'slots,locale')
+  assert.equal(plugin.inject.join(','), 'slots,locale,remote,remote.session')
 
   let dictionary
   let registration

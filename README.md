@@ -99,6 +99,11 @@ light/dark theme. The layout is a fixed sidebar plus a chat panel:
   area — or clicking the pull-up bar — loads **20 older messages per request**
   until history is exhausted; an empty today loads the latest page
   automatically. A centered date divider separates days.
+- URLs in message text open in the browser. Absolute file paths, backticked
+  relative paths, and markdown file links are clickable and open through the
+  Host's `openWorkspacePath` in the default desktop application; relative paths
+  resolve against the sending session's cwd. A failed open shows a short error
+  strip instead of navigating away.
 - New messages arrive over an authenticated server-sent event stream and append
   automatically; there is no polling. A manual refresh performs a hard resync.
 - The composer queues a request for the selected peer. It is disabled when the

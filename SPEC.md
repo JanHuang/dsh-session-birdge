@@ -19,8 +19,10 @@
 >   当天，滚动到顶部或点击上拉条时通过 `/api/session-bridge/history`
 >   每次加载 20 条更早消息，当天为空时自动加载最新一页。
 >   消息为流式卡片：接收方在左、发送方在右；Lead 请求用中性底色，Bridge
->   回复固定 #165DFF 白字；代码块深色并带复制；面板跟随宿主
->   `body[data-ds-dark-theme]` 切换浅/深色。新消息通过
+>   回复固定 #165DFF 白字；代码块深色并带复制；正文中的 URL 可点击打开浏览器，
+>   绝对路径、反引号相对路径和 Markdown 文件链接通过 Host 的
+>   `openWorkspacePath` 在默认应用中打开，相对路径按发送方 cwd 解析；
+>   面板跟随宿主 `body[data-ds-dark-theme]` 切换浅/深色。新消息通过
 >   `/api/session-bridge/events`（SSE）实时追加，不做定时轮询。
 >   底部输入栏通过 `/api/session-bridge/send` 排队请求；数据路由受 Web 连接
 >   owner 防火墙保护。

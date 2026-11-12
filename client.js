@@ -55,6 +55,7 @@ window.__ModuleLoader__.load({
       'send.unbound': '对方会话尚未绑定，暂时无法发送',
       'send.button': '发送',
       'send.failed': '发送失败',
+      'open.failed': '无法打开该文件或链接',
     }
     const en = {
       'view.bridge': 'Bridge',
@@ -91,6 +92,7 @@ window.__ModuleLoader__.load({
       'send.unbound': 'The peer session is not bound yet',
       'send.button': 'Send',
       'send.failed': 'Could not send',
+      'open.failed': 'Could not open that path',
     }
 
     const CSS = `
@@ -173,6 +175,12 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-sender-dot { width:6px; height:6px; border-radius:50%; background:var(--dsb-card-dot); }
 .dsb-tag { margin-left:auto; flex:0 0 auto; padding:1px 8px; border-radius:999px; background:var(--dsb-card-tag-bg); color:var(--dsb-card-tag-text); font-size:12px; line-height:18px; }
 .dsb-body { font-size:14px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.dsb-link { color:var(--dsb-focus); text-decoration:underline; text-underline-offset:2px; }
+.dsb-file-link { appearance:none; border:0; background:none; padding:0; color:var(--dsb-focus); font:inherit; text-decoration:underline; text-underline-offset:2px; cursor:pointer; text-align:left; overflow-wrap:anywhere; }
+.dsb-inline-code { font-family:"JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-size:12px; padding:1px 4px; border-radius:4px; background:rgba(29,33,41,.06); }
+.dsb-card[data-variant="bridge"] .dsb-link, .dsb-card[data-variant="bridge"] .dsb-file-link { color:#FFFFFF; }
+.dsb-card[data-variant="bridge"] .dsb-inline-code { background:rgba(255,255,255,.14); color:#FFFFFF; }
+body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
 .dsb-foot { display:flex; align-items:center; gap:8px; color:var(--dsb-card-muted); font-size:12px; line-height:18px; }
 .dsb-foot .dsb-thread-id { margin-left:auto; font-family:"JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-size:12px; }
 .dsb-code { border-radius:6px; background:var(--dsb-code-bg); overflow:hidden; }
@@ -289,6 +297,86 @@ body[data-ds-dark-theme] .dsb-root {
       return null
     }
 
+    /** Resolve one token to an absolute Host path, or null when it is not a file reference. */
+    function resolveFile(value, baseCwd) {
+      if (typeof value !== 'string' || value === '') return null
+      if (/^https?:\/\//i.test(value)) return null
+      if (/^file:\/\//i.test(value)) {
+        try {
+          return decodeURIComponent(new URL(value).pathname)
+        } catch {
+          return null
+        }
+      }
+      if (/^[A-Za-z]:[\\/]/.test(value)) return value
+      if (value.startsWith('/') && /\.[A-Za-z0-9]{1,8}$/.test(value)) return value
+      if (typeof baseCwd === 'string' && baseCwd.startsWith('/')
+        && /^(?:\.{1,2}\/)?(?:[^\s/]+\/)+[^\s/]+\.[A-Za-z0-9]{1,8}$/.test(value)) {
+        const parts = `${baseCwd.replace(/\/+$/, '')}/${value}`.split('/')
+        const output = []
+        for (const part of parts) {
+          if (part === '' || part === '.') continue
+          if (part === '..') output.pop()
+          else output.push(part)
+        }
+        return `/${output.join('/')}`
+      }
+      return null
+    }
+
+    /** Render links and file paths inside one text segment. */
+    function RichText({ text, baseCwd, onOpenPath }) {
+      const nodes = []
+      let index = 0
+      let last = 0
+      const pattern = /(\[([^\]\n]+)\]\(([^)\s]+)\)|https?:\/\/[^\s<>"'`]+|(?<![\w/])\/(?:[^\s/]+\/)*[^\s/]+\.[A-Za-z0-9]{1,8}|`[^`\n]+`|(?<![\w./-])(?:\.{1,2}\/)?(?:[^\s/()\[\]{}<>"']+\/)+[^\s/()\[\]{}<>"']+\.[A-Za-z0-9]{1,8})/g
+
+      const pushLink = (label, target, key) => {
+        if (/^https?:\/\//i.test(target)) {
+          nodes.push(h('a', {
+            key, className: 'dsb-link', href: target, target: '_blank', rel: 'noopener noreferrer',
+          }, label))
+          return true
+        }
+        const resolved = resolveFile(target, baseCwd)
+        if (resolved === null) return false
+        nodes.push(h('button', {
+          key, type: 'button', className: 'dsb-file-link', title: resolved,
+          onClick: () => { void onOpenPath(resolved) },
+        }, label))
+        return true
+      }
+
+      let match
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > last) nodes.push(h('span', { key: `t${index++}` }, text.slice(last, match.index)))
+        const token = match[1]
+        if (match[2] !== undefined && match[3] !== undefined) {
+          const label = match[2]
+          const target = match[3]
+          if (!pushLink(label, target, `l${index++}`)) {
+            nodes.push(h('span', { key: `m${index++}` }, token))
+          }
+        } else if (token.startsWith('`') && token.endsWith('`')) {
+          const inner = token.slice(1, -1)
+          if (!pushLink(inner, inner, `i${index++}`)) {
+            nodes.push(h('code', { key: `c${index++}`, className: 'dsb-inline-code' }, inner))
+          }
+        } else {
+          const trailingMatch = /[.,;:!?，。；：！？)）】\]}]+$/.exec(token)
+          const trailing = trailingMatch === null ? '' : trailingMatch[0]
+          const core = trailing === '' ? token : token.slice(0, token.length - trailing.length)
+          if (!pushLink(core, core, `f${index++}`)) {
+            nodes.push(h('span', { key: `s${index++}` }, core))
+          }
+          if (trailing !== '') nodes.push(h('span', { key: `p${index++}` }, trailing))
+        }
+        last = pattern.lastIndex
+      }
+      if (last < text.length) nodes.push(h('span', { key: `t${index++}` }, text.slice(last)))
+      return h(React.Fragment, null, ...nodes)
+    }
+
     /** Preview line that scrolls as a marquee only when its text overflows. */
     function MarqueePreview({ text }) {
       const containerRef = useRef(null)
@@ -356,6 +444,7 @@ body[data-ds-dark-theme] .dsb-root {
       const [draft, setDraft] = useState('')
       const [sending, setSending] = useState(false)
       const [sendError, setSendError] = useState(null)
+      const [openError, setOpenError] = useState(null)
       const mounted = useRef(true)
       const hasData = useRef(false)
       const messagesRef = useRef(null)
@@ -709,6 +798,22 @@ body[data-ds-dark-theme] .dsb-root {
         void loadHistory()
       }, [active?.id, todayMessages.length, canPageHistory])
 
+      const openLocalPath = async path => {
+        setOpenError(null)
+        if (typeof props.openPath !== 'function') {
+          setOpenError(translate('open.failed', 'Could not open that path'))
+          return
+        }
+        try {
+          const result = await props.openPath(path)
+          if (result === undefined || result.ok !== true) {
+            setOpenError(result?.error ?? translate('open.failed', 'Could not open that path'))
+          }
+        } catch (failure) {
+          setOpenError(failure instanceof Error ? failure.message : String(failure))
+        }
+      }
+
       const submit = async event => {
         event.preventDefault()
         if (!canSend || sending) return
@@ -758,6 +863,9 @@ body[data-ds-dark-theme] .dsb-root {
       const errorStrip = error !== null && snapshot !== null
         ? h('div', { className: 'dsb-error-strip' }, `${translate('error', 'Could not read bridge messages')}: ${error}`)
         : null
+      const openErrorStrip = openError === null
+        ? null
+        : h('div', { className: 'dsb-error-strip' }, openError)
       const center = (title, hint, extra) => h('div', { className: 'dsb-center' },
         h('div', { className: 'dsb-center-title' }, title),
         hint === null ? null : h('div', null, hint),
@@ -857,7 +965,14 @@ body[data-ds-dark-theme] .dsb-root {
           parts.forEach((part, index) => {
             if (part.type === 'text') {
               const text = part.text.trim()
-              if (text !== '') body.push(h('div', { key: `text-${index}`, className: 'dsb-body' }, text))
+              if (text !== '') {
+                body.push(h('div', { key: `text-${index}`, className: 'dsb-body' },
+                  h(RichText, {
+                    text,
+                    baseCwd: sessions[message.fromSessionId]?.cwd,
+                    onOpenPath: openLocalPath,
+                  })))
+              }
               return
             }
             body.push(h('div', { key: `code-${index}`, className: 'dsb-code' },
@@ -949,22 +1064,35 @@ body[data-ds-dark-theme] .dsb-root {
         )
       }
 
-      return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header, errorStrip,
+      return h('div', { className: 'dsb-root', ref: rootRef }, h('style', null, CSS), header, errorStrip, openErrorStrip,
         h('div', { className: 'dsb-main' }, list, chat))
     }
 
     return {
       name: 'session-bridge',
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'remote', 'remote.session'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'session-bridge: dictionaries')
         const t = ctx.locale.bind(NS)
+        const openPath = async path => {
+          try {
+            const remote = ctx.remote
+            if (remote?.session?.openWorkspacePath === undefined) {
+              return { ok: false, error: t('open.failed') }
+            }
+            const result = await remote.session.openWorkspacePath({ path })
+            return { ok: result.ok === true, error: result.ok === true ? undefined : (result.error?.message ?? t('open.failed')) }
+          } catch (failure) {
+            return { ok: false, error: failure instanceof Error ? failure.message : String(failure) }
+          }
+        }
         ctx.slots.inject('conversation.view', () => ctx.slots.register({
           name: 'conversation.view',
           id: 'bridge',
           order: 15,
           locale: NS,
           label: () => t('view.bridge'),
+          inject: () => ({ openPath }),
         }, BridgeView))
       },
     }
