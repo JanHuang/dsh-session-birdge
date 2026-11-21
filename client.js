@@ -27,6 +27,8 @@ window.__ModuleLoader__.load({
       'picker.label': '选择要操作的身份会话',
       'session.open': '打开会话…',
       'session.openLabel': '跳转到该 session 的真实会话',
+      'session.jumpLabel': '跳转会话',
+      'session.identity': '身份',
       'title': '会话聊天',
       'live': '实时更新',
       'reconnecting': '重连中…',
@@ -82,6 +84,8 @@ window.__ModuleLoader__.load({
       'picker.label': 'Choose the session to act as',
       'session.open': 'Open session…',
       'session.openLabel': 'Open the real conversation of a session',
+      'session.jumpLabel': 'Go to',
+      'session.identity': 'Act as',
       'title': 'Session Chat',
       'live': 'Live',
       'reconnecting': 'Reconnecting…',
@@ -199,7 +203,9 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-member-avatar { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--dsb-lead); color:var(--dsb-text); font-size:10px; font-weight:700; flex:0 0 auto; }
 .dsb-member-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px; }
 .dsb-member-role { color:var(--dsb-muted); font-size:11px; }
-.dsb-session-picker { margin-left:10px; height:26px; border:1px solid var(--dsb-line); border-radius:6px; background:var(--dsb-input); color:var(--dsb-text); font-size:12px; max-width:220px; }
+.dsb-top-select { display:inline-flex; align-items:center; gap:4px; margin-left:10px; }
+.dsb-select-label { color:var(--dsb-muted); font-size:11px; white-space:nowrap; }
+.dsb-session-picker { margin-left:0; height:26px; border:1px solid var(--dsb-line); border-radius:6px; background:var(--dsb-input); color:var(--dsb-text); font-size:12px; max-width:220px; }
 .dsb-session-jump { border-color:var(--dsb-focus); }
 body[data-ds-dark-theme] .dsb-member-chip { border-color:var(--dsb-line); }
 body[data-ds-dark-theme] .dsb-member-avatar { background:var(--dsb-panel); }
@@ -477,6 +483,9 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
       )
     }
 
+    /** Runtime services captured by apply; root panels cannot rely on slot inject. */
+    const runtime = { openPath: null, openSession: null, t: null }
+
     /** Sidebar rail icon for the global Session Chat panel. */
     function SessionChatIcon({ size = 20, active = false }) {
       return h('svg', {
@@ -497,9 +506,22 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
       )
     }
 
+    /** Bind runtime fallbacks so root panels work without slot injection. */
+    function SessionChatView(props) {
+      return h(BridgeView, {
+        ...props,
+        openPath: props.openPath ?? (path => runtime.openPath?.(path)),
+        openSession: props.openSession ?? (sessionId => {
+          if (runtime.openSession === null) throw new Error('session navigation is unavailable')
+          return runtime.openSession(sessionId)
+        }),
+        t: props.t ?? (key => runtime.t?.(key)),
+      })
+    }
+
     /** Global panel version with a session selector; conversation tabs supply a session directly. */
     function SessionChatPage(props) {
-      return h(BridgeView, { ...props, allowSessionPicker: true })
+      return h(SessionChatView, { ...props, allowSessionPicker: true })
     }
 
     /** The tab component. */
@@ -1061,11 +1083,24 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             : sessionId)))
         : null
 
+      const jumpPicker = sessionJump === null
+        ? null
+        : h('span', { className: 'dsb-top-select' },
+          h('span', { className: 'dsb-select-label' }, translate('session.jumpLabel', 'Go to')),
+          sessionJump,
+        )
+      const identityPicker = sessionPicker === null
+        ? null
+        : h('span', { className: 'dsb-top-select' },
+          h('span', { className: 'dsb-select-label' }, translate('session.identity', 'Act as')),
+          sessionPicker,
+        )
+
       const header = h('div', { className: 'dsb-topbar' },
         h('div', { className: 'dsb-brand' },
           translate('title', 'Session Chat'),
-          sessionPicker,
-          sessionJump,
+          jumpPicker,
+          identityPicker,
         ),
         h('div', { className: 'dsb-top-actions' },
           h('span', { className: 'dsb-live' },
@@ -1390,6 +1425,8 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             throw failure
           }
         }
+        runtime.openSession = openSession
+        runtime.t = t
         const openPath = async path => {
           try {
             const remote = ctx.remote
@@ -1402,6 +1439,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
             return { ok: false, error: failure instanceof Error ? failure.message : String(failure) }
           }
         }
+        runtime.openPath = openPath
         ctx.slots.register({
           name: 'sidebar.panellist',
           id: 'session-chat',
@@ -1420,7 +1458,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
           locale: NS,
           label: () => t('view.bridge'),
           inject: () => ({ openPath, openSession }),
-        }, BridgeView))
+        }, SessionChatView))
       },
     }
   },
