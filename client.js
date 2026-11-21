@@ -1414,12 +1414,13 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
 
     return {
       name: 'session-bridge',
-      inject: ['slots', 'locale', 'remote', 'remote.session', 'uiWorkspace'],
+      inject: ['slots', 'locale', 'remote', 'remote.session', 'layout', 'uiWorkspace'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'session-bridge: dictionaries')
         const t = ctx.locale.bind(NS)
         const openSession = sessionId => {
           try {
+            ctx.layout.selectPanel('conversation')
             ctx.uiWorkspace.openSession(sessionId)
           } catch (failure) {
             throw failure
