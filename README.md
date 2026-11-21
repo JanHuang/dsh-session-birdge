@@ -116,7 +116,10 @@ the group's messages remain in the database for history and audit.
 The bundle ships a Client half. A **Session Chat** tab (`会话聊天`) appears in the
 conversation View row after **Trajectory** (`轨迹`), and a global **Session Chat**
 icon in the sidebar rail opens a standalone panel with an identity-session
-picker. Both follow the host's light/dark theme. The layout is a fixed sidebar plus a chat panel:
+picker and an **Open session…** picker. Choosing a session id in the latter
+navigates to that session's real Conversation and shows its transcript; the
+identity picker only decides which session acts inside the panel. Both follow
+the host's light/dark theme. The layout is a fixed sidebar plus a chat panel:
 
 - The left list scrolls independently and uses background fill only — no
   dividers, borders, or separators. Default, hover, and selected states use

@@ -28,7 +28,7 @@ test('the client bundle registers one named View after Trajectory', () => {
     throw new Error(`unexpected require ${specifier}`)
   })
   assert.equal(plugin.name, 'session-bridge')
-  assert.equal(plugin.inject.join(','), 'slots,locale,remote,remote.session')
+  assert.equal(plugin.inject.join(','), 'slots,locale,remote,remote.session,uiWorkspace')
 
   let dictionary
   let registration
@@ -77,4 +77,5 @@ test('the client bundle registers one named View after Trajectory', () => {
   const main = registrations.find(entry => entry.options.name === 'main')
   assert.ok(main)
   assert.equal(main.options.key, 'session-chat')
+  assert.equal(typeof main.options.inject().openSession, 'function')
 })

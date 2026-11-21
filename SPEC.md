@@ -54,6 +54,10 @@
 >   保留，仍可按 group id 查历史/审计。侧边栏新增全局「会话聊天」面板图标，
 >   对应 main 面板 key `session-chat`，顶部提供身份会话选择器；原会话 View
 >   标签继续使用当前会话。
+> - **v0.6 会话跳转**：面板顶部增加「打开会话…」选择器，列出 profile 内
+>   每个 session 的标题/短 id；选中后调用 Client `uiWorkspace.openSession`
+>   跳到该 session 的真实 Conversation，展示其普通对话记录。身份选择器与
+>   跳转选择器分离：前者只决定面板内以哪个 session 发送，不触发跳转。
 > - 项目显示名改为 **Session Chat / 会话聊天**；本地包名仍为
 >   `dsh-session-bridge`，npm 发布名计划 `@janhuang/dsh-session-chat`。
 >

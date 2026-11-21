@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
       'view.bridge': '会话聊天',
       'view.chat': '会话聊天',
       'picker.label': '选择要操作的身份会话',
+      'session.open': '打开会话…',
+      'session.openLabel': '跳转到该 session 的真实会话',
       'title': '会话聊天',
       'live': '实时更新',
       'reconnecting': '重连中…',
@@ -78,6 +80,8 @@ window.__ModuleLoader__.load({
       'view.bridge': 'Session Chat',
       'view.chat': 'Session Chat',
       'picker.label': 'Choose the session to act as',
+      'session.open': 'Open session…',
+      'session.openLabel': 'Open the real conversation of a session',
       'title': 'Session Chat',
       'live': 'Live',
       'reconnecting': 'Reconnecting…',
@@ -196,6 +200,7 @@ body[data-ds-dark-theme] .dsb-root {
 .dsb-member-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px; }
 .dsb-member-role { color:var(--dsb-muted); font-size:11px; }
 .dsb-session-picker { margin-left:10px; height:26px; border:1px solid var(--dsb-line); border-radius:6px; background:var(--dsb-input); color:var(--dsb-text); font-size:12px; max-width:220px; }
+.dsb-session-jump { border-color:var(--dsb-focus); }
 body[data-ds-dark-theme] .dsb-member-chip { border-color:var(--dsb-line); }
 body[data-ds-dark-theme] .dsb-member-avatar { background:var(--dsb-panel); }
 body[data-ds-dark-theme] .dsb-group-dissolve.danger { color:#FF7D7D; }
@@ -1030,10 +1035,37 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
               : `${sessionId.slice(0, 8)}…${sessionId.slice(-6)}`)))
         : null
 
+      const sessionJump = snapshot !== null && props.openSession !== undefined
+        ? h('select', {
+          className: 'dsb-session-picker dsb-session-jump',
+          value: '',
+          'aria-label': translate('session.openLabel', 'Open the real conversation of a session'),
+          onChange: event => {
+            const target = event.target.value
+            event.target.value = ''
+            if (target === '') return
+            try {
+              props.openSession(target)
+            } catch (failure) {
+              setOpenError(failure instanceof Error ? failure.message : String(failure))
+            }
+          },
+        },
+          h('option', { value: '' }, translate('session.open', 'Open session…')),
+          Object.entries(sessions).map(([sessionId, info]) => h('option', {
+            key: sessionId,
+            value: sessionId,
+            title: sessionId,
+          }, typeof info.title === 'string' && info.title !== ''
+            ? `${info.title} (${sessionId.slice(0, 8)}…)`
+            : sessionId)))
+        : null
+
       const header = h('div', { className: 'dsb-topbar' },
         h('div', { className: 'dsb-brand' },
           translate('title', 'Session Chat'),
           sessionPicker,
+          sessionJump,
         ),
         h('div', { className: 'dsb-top-actions' },
           h('span', { className: 'dsb-live' },
@@ -1347,10 +1379,17 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
 
     return {
       name: 'session-bridge',
-      inject: ['slots', 'locale', 'remote', 'remote.session'],
+      inject: ['slots', 'locale', 'remote', 'remote.session', 'uiWorkspace'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'session-bridge: dictionaries')
         const t = ctx.locale.bind(NS)
+        const openSession = sessionId => {
+          try {
+            ctx.uiWorkspace.openSession(sessionId)
+          } catch (failure) {
+            throw failure
+          }
+        }
         const openPath = async path => {
           try {
             const remote = ctx.remote
@@ -1372,7 +1411,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
         ctx.slots.register({
           name: 'main',
           key: 'session-chat',
-          inject: () => ({ openPath, t }),
+          inject: () => ({ openPath, openSession, t }),
         }, SessionChatPage)
         ctx.slots.inject('conversation.view', () => ctx.slots.register({
           name: 'conversation.view',
@@ -1380,7 +1419,7 @@ body[data-ds-dark-theme] .dsb-inline-code { background:rgba(255,255,255,.08); }
           order: 15,
           locale: NS,
           label: () => t('view.bridge'),
-          inject: () => ({ openPath }),
+          inject: () => ({ openPath, openSession }),
         }, BridgeView))
       },
     }
